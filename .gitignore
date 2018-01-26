@@ -4,3 +4,6 @@
 /tags
 __pycache__
 /.cache
+/build/
+/dist/
+/libchirp.egg-info/
