@@ -2,3 +2,5 @@
 /*.so
 /_libchirp_cffi.c
 /tags
+__pycache__
+/.cache

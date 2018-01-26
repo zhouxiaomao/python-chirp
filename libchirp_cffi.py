@@ -1,5 +1,42 @@
 """cffi for libchirp binding."""
+import sys
 from cffi import FFI
+
+libs = [
+    "uv",
+]
+
+cflags = []
+ldflags = []
+
+if sys.platform == "win32":
+    libs.extend([
+        "advapi32",
+        "iphlpapi",
+        "psapi",
+        "shell32",
+        "user32",
+        "userenv",
+        "ws2_32",
+        "kernel32",
+        "libeay32",
+        "ssleay32",
+        "gdi32",
+        "crypt32",
+    ])
+    ldflags.extend(["/LIBPATH:openssl\\lib"])
+else:
+    libs.extend([
+        "m",
+        "pthread",
+        "ssl",
+        "crypto",
+    ])
+    if sys.platform != "darwin":
+        libs.append("rt")
+    else:
+        cflags.append("-I/usr/local/opt/openssl/include")
+        ldflags.append("-L/usr/local/opt/openssl/lib")
 
 ffibuilder = FFI()
 
@@ -30,11 +67,24 @@ typedef enum {
     CH_INIT_FAIL      = 19,
 } ch_error_t;
 
+/* libchirp init */
+void
+ch_en_set_manual_tls_init(void);
+
+ch_error_t
+ch_libchirp_cleanup(void);
+
 ch_error_t
 ch_libchirp_init(void);
 """
 
-ffibuilder.set_source("_libchirp_cffi", _source)
+ffibuilder.set_source(
+    "_libchirp_cffi",
+    _source,
+    libraries=libs,
+    extra_compile_args=cflags,
+    extra_link_args=ldflags,
+)
 ffibuilder.cdef(_header)
 
 if __name__ == "__main__":
