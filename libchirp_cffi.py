@@ -7,12 +7,12 @@ from cffi import FFI
 
 here = os.environ.get("LICHIRP_HERE") or path.abspath(path.dirname(__file__))
 
-libs = ["libuv"]
+libs = []
 libdirs = []
 incdirs = [here]
 
 if sys.platform == "win32":
-    if platform.architecture() == "64bit":
+    if platform.architecture()[0] == "64bit":
         bits = "64"
     else:
         bits = "32"
@@ -23,6 +23,7 @@ if sys.platform == "win32":
     incdirs.append(path.join(here, "..", "libuv-build", uvdir, "include"))
     incdirs.append(path.join(here, "..", "openssl-build", ssldir, "include"))
     libs.extend([
+        "libuv",
         "advapi32",
         "iphlpapi",
         "psapi",
@@ -38,6 +39,7 @@ if sys.platform == "win32":
     ])
 else:
     libs.extend([
+        "uv",
         "m",
         "pthread",
         "ssl",
