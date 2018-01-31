@@ -1,6 +1,10 @@
 sudo: required
+language: generic
 
-services:
-  - docker
-script:
-  - ci/run.sh
+matrix:
+  include:
+    - os: linux
+      services: docker
+      script: ci/run.sh
+    - os: osx
+      script: ci/osx.sh
