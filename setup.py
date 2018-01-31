@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 """Setup of libchirp."""
 
+import sys
+import os
 from os import path
 from setuptools import setup, find_packages
 
-here = path.abspath(path.dirname(__file__))
+os.environ["LICHIRP_HERE"] = path.abspath(path.dirname(__file__))
 
 try:
     setup(
         name="libchirp",
-        version="0.2.0-beta",
+        version="0.2.0b0",
         description="Message-passing for everyone.",
         long_description=open("README.rst", "rt").read(),
         url="https://github.com/concretecloud/python-chirp",
@@ -28,10 +30,10 @@ try:
         cffi_modules=[
             "./libchirp_cffi.py:ffibuilder",
         ],
-        include_dirs=[here]
     )
 except (SystemExit, Exception):
-    print("""Setup failed. Probably a dependency was not found.
+    if len(sys.argv) > 1:
+        print("""Setup failed. Probably a dependency was not found.
 
 Please install dependencies (libuv>1.0, openssl or libressl):
 

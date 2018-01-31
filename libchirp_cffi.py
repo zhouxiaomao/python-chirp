@@ -1,15 +1,27 @@
 """cffi for libchirp binding."""
 import sys
+import os
+from os import path
+import platform
 from cffi import FFI
 
-libs = [
-    "uv",
-]
+here = os.environ.get("LICHIRP_HERE") or path.abspath(path.dirname(__file__))
 
-cflags = []
-ldflags = []
+libs = ["libuv"]
+libdirs = []
+incdirs = [here]
 
 if sys.platform == "win32":
+    if platform.architecture() == "64bit":
+        bits = "64"
+    else:
+        bits = "32"
+    uvdir = "libuv-2015-%s-release" % bits
+    ssldir = "openssl-2015-%s-release" % bits
+    libdirs.append(path.join(here, "..", "libuv-build", uvdir, "lib"))
+    libdirs.append(path.join(here, "..", "openssl-build", ssldir, "lib"))
+    incdirs.append(path.join(here, "..", "libuv-build", uvdir, "include"))
+    incdirs.append(path.join(here, "..", "openssl-build", ssldir, "include"))
     libs.extend([
         "advapi32",
         "iphlpapi",
@@ -24,7 +36,6 @@ if sys.platform == "win32":
         "gdi32",
         "crypt32",
     ])
-    ldflags.extend(["/LIBPATH:openssl\\lib"])
 else:
     libs.extend([
         "m",
@@ -35,8 +46,8 @@ else:
     if sys.platform != "darwin":
         libs.append("rt")
     else:
-        cflags.append("-I/usr/local/opt/openssl/include")
-        ldflags.append("-L/usr/local/opt/openssl/lib")
+        incdirs.append("/usr/local/opt/openssl/include")
+        libdirs.append("/usr/local/opt/openssl/lib")
 
 ffibuilder = FFI()
 
@@ -82,8 +93,8 @@ ffibuilder.set_source(
     "_libchirp_cffi",
     _source,
     libraries=libs,
-    extra_compile_args=cflags,
-    extra_link_args=ldflags,
+    library_dirs=libdirs,
+    include_dirs=incdirs,
 )
 ffibuilder.cdef(_header)
 
