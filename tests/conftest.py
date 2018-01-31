@@ -1,4 +1,4 @@
-import pytest
+"""Configure pytest."""
 from libchirp_cffi import ffibuilder
 
 

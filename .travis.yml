@@ -1,0 +1,6 @@
+sudo: required
+
+services:
+  - docker
+script:
+  - ci/run.sh
