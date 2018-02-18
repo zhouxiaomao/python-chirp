@@ -6,7 +6,9 @@ import platform
 from cffi import FFI
 
 here = os.environ.get("LICHIRP_HERE") or path.abspath(path.dirname(__file__))
+static = os.environ.get("LIBCHIRP_STATIC") == "True"
 
+link = []
 libs = []
 libdirs = []
 incdirs = [here]
@@ -39,17 +41,26 @@ if sys.platform == "win32":
     ])
 else:
     libs.extend([
-        "uv",
         "m",
         "pthread",
-        "ssl",
-        "crypto",
     ])
+    if static:
+        link.extend(
+            path.join(here, lib) for lib in
+            ["libuv.a", "libcrypto.a", "libssl.a"]
+        )
+    else:
+        libs.extend([
+            "uv",
+            "ssl",
+            "crypto",
+        ])
     if sys.platform != "darwin":
         libs.append("rt")
     else:
-        incdirs.append("/usr/local/opt/openssl/include")
-        libdirs.append("/usr/local/opt/openssl/lib")
+        if not static:
+            incdirs.append("/usr/local/opt/openssl/include")
+            libdirs.append("/usr/local/opt/openssl/lib")
 
 ffibuilder = FFI()
 
@@ -123,6 +134,7 @@ ffibuilder.set_source(
     libraries=libs,
     library_dirs=libdirs,
     include_dirs=incdirs,
+    extra_link_args=link,
 )
 ffibuilder.cdef(_header)
 

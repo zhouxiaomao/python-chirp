@@ -8,3 +8,4 @@ __pycache__
 /dist/
 /libchirp.egg-info/
 /.eggs
+/.hypothesis/
