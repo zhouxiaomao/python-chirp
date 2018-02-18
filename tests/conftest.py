@@ -1,5 +1,9 @@
 """Configure pytest."""
-from libchirp_cffi import ffibuilder
+import pytest
+from libchirp import Config
 
 
-ffibuilder.compile(verbose=True)
+@pytest.fixture
+def config():
+    """Return a libchirp config."""
+    return Config()

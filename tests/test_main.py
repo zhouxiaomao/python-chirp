@@ -1,7 +1,15 @@
 """Basic tests."""
-import libchirp
+from libchirp import lib, ffi
 
 
 def test_bind():
-    """Test if libchirp binding works."""
-    assert libchirp.lib.CH_SUCCESS == 0
+    """test_bind."""
+    assert lib.CH_SUCCESS == 0
+
+
+def test_ch_chirp_config_init():
+    """test_ch_chirp_config_init."""
+    config = ffi.new("ch_config_t *")
+    port = config.PORT
+    lib.ch_chirp_config_init(config)
+    assert port != config.PORT
