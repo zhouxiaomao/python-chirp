@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 0.2.0-beta amalgamation
+// libchirp 0.2.1-beta amalgamation
 // ================================
 
 #include "libchirp.h"
@@ -185,9 +185,6 @@ typedef struct ch_protocol_s ch_protocol_t;
 //
 //    Be aware of :ref:`double-eval`
 //
-//    The assert macro A(condition, ...) behaves like printf and allows to
-//    print a arbitrary arguments when the given assertion fails.
-//
 //    :param condition: A boolean condition to check.
 //    :param message:   Message to display
 //
@@ -200,6 +197,28 @@ typedef struct ch_protocol_s ch_protocol_t;
                 __FILE__,                                                      \
                 __LINE__,                                                      \
                 message);                                                      \
+        exit(1);                                                               \
+    }
+
+// .. c:macro:: AP
+//
+//    Validates the given condition and reports arbitrary arguments when the
+//    condition is not met in debug-/development-mode.
+//
+//    Be aware of :ref:`double-eval`
+//
+//    The assert macro AP(condition, ...) behaves like printf and allows to
+//    print a arbitrary arguments when the given assertion fails.
+//
+//    :param condition: A boolean condition to check.
+//    :param message:   Message to display
+//
+// .. code-block:: cpp
+//
+#define AP(condition, message, ...)                                            \
+    if (!(condition)) {                                                        \
+        fprintf(stderr, "%s:%d: Assert failed: ", __FILE__, __LINE__);         \
+        fprintf(stderr, message "\n", __VA_ARGS__);                            \
         exit(1);                                                               \
     }
 
@@ -230,12 +249,25 @@ typedef struct ch_protocol_s ch_protocol_t;
 //
 #define A(condition, message) (void) 0
 
+//.. c:macro:: AP
+//
+//    See :c:macro:`AP`. Does nothing in release-mode.
+//
+//    Be aware of :ref:`double-eval`
+//
+// .. code-block:: cpp
+//
+#define AP(condition, message, ...) (void) 0
+
 #define ch_chirp_check_m(chirp) (void) (chirp)
 
 #endif
 
 #ifndef A
 #error Assert macro not defined
+#endif
+#ifndef AP
+#error Assert print macro not defined
 #endif
 #ifndef ch_chirp_check_m
 #error ch_chirp_check_m macro not defined
@@ -5372,499 +5404,748 @@ ch_chirp_finish_message(
 //
 
 #endif // ch_chirp_h
-// ====
-// Util
-// ====
-//
-// Common utility functions.
+// ======
+// Writer
+// ======
 //
 
 // Project includes
 // ================
 //
 // .. code-block:: cpp
-
-/* #include "util.h" */
-/* #include "chirp.h" */
-/* #include "rbtree.h" */
-
-// System includes
-// ===============
 //
-// .. code-block:: cpp
-
-#include <stdarg.h>
+/* #include "writer.h" */
+/* #include "chirp.h" */
+/* #include "protocol.h" */
+/* #include "remote.h" */
+/* #include "util.h" */
 
 // Declarations
 // ============
-//
-// .. code-block:: cpp
-//
-
-static int             _ch_always_encrypt = 0;
-static ch_free_cb_t    _ch_free_cb        = free;
-static ch_alloc_cb_t   _ch_alloc_cb       = malloc;
-static ch_realloc_cb_t _ch_realloc_cb     = realloc;
-
-// Logging and assert macros
-// =========================
-//
-// Colors
-// ------
-//
-// .. code-block:: cpp
-
-static char* const _ch_lg_reset     = "\x1B[0m";
-static char* const _ch_lg_err       = "\x1B[1;31m";
-static char* const _ch_lg_colors[8] = {
-        "\x1B[0;34m",
-        "\x1B[0;32m",
-        "\x1B[0;36m",
-        "\x1B[0;33m",
-        "\x1B[1;34m",
-        "\x1B[1;32m",
-        "\x1B[1;36m",
-        "\x1B[1;33m",
-};
-
-#ifdef CH_ENABLE_ASSERTS
-
-// Debug alloc tracking
-// ====================
-//
-// Since we can't use valgrind and rr at the same time and I needed to debug a
-// leak with rr, I added this memory leak debugging code. Since we use rr, the
-// pointer to the allocation is enough, we don't need any meta information.
-
-// .. c:var:: uv_mutex_t _ch_at_lock
-//
-//    Lock for alloc tracking
-//
-// .. code-block:: cpp
-//
-static uv_mutex_t _ch_at_lock;
-
-struct ch_alloc_track_s;
-typedef struct ch_alloc_track_s ch_alloc_track_t;
-struct ch_alloc_track_s {
-    void*             buf;
-    char              color;
-    ch_alloc_track_t* parent;
-    ch_alloc_track_t* left;
-    ch_alloc_track_t* right;
-};
-
-#define _ch_at_cmp_m(x, y) rb_safe_cmp_m(x->buf, y->buf)
-
-rb_bind_m(_ch_at, ch_alloc_track_t) CH_ALLOW_NL;
-
-ch_alloc_track_t* _ch_alloc_tree;
 
 // .. c:function::
-int
-ch_at_allocated(void* buf)
-//    :noindex:
+static int
+_ch_wr_check_write_error(
+        ch_chirp_t*      chirp,
+        ch_writer_t*     writer,
+        ch_connection_t* conn,
+        int              status);
 //
-//    see: :c:func:`ch_at_allocated`
+//    Check if the given status is erroneous (that is, there was an error
+//    during writing) and cleanup if necessary. Cleaning up means shutting down
+//    the given connection instance, stopping the timer for the send-timeout.
 //
-// .. code-block:: cpp
+//    :param ch_chirp_t* chirp:      Pointer to a chirp instance.
+//    :param ch_writer_t* writer:    Pointer to a writer instance.
+//    :param ch_connection_t* conn:  Pointer to a connection instance.
+//    :param int status:             Status of the write, of type
+//                                   :c:type:`ch_error_t`.
 //
-{
-    ch_alloc_track_t  key;
-    ch_alloc_track_t* value;
-    key.buf = buf;
-    return _ch_at_find(_ch_alloc_tree, &key, &value) == CH_SUCCESS;
-}
+//    :return:                       the status, which is of type
+//                                   :c:type:`ch_error_t`.
+//    :rtype:                        int
+//
 
 // .. c:function::
-static void*
-_ch_at_alloc(void* buf)
+static ch_error_t
+_ch_wr_connect(ch_remote_t* remote);
 //
-//    Track a memory allocation.
+//    Connects to a remote peer.
 //
-//    :param void* buf: Pointer to the buffer to track.
-//
-// .. code-block:: cpp
-//
-{
-    /* We do not track failed allocations */
-    if (buf == NULL) {
-        return buf;
-    }
-    ch_alloc_track_t* track = _ch_alloc_cb(sizeof(*track));
-    assert(track);
-    /* We treat a failure to track as an alloc failure. This code is here
-     * if we ever need to use this in release mode (or just for
-     * correctness). */
-    if (track == NULL) {
-        return NULL;
-    }
-    _ch_at_node_init(track);
-    track->buf = buf;
-    uv_mutex_lock(&_ch_at_lock);
-    int ret = _ch_at_insert(&_ch_alloc_tree, track);
-    uv_mutex_unlock(&_ch_at_lock);
-    assert(ret == 0);
-    return buf;
-}
-
-// .. c:function::
-void
-ch_at_cleanup(void)
-//    :noindex:
-//
-//    see: :c:func:`ch_at_cleanup`
-//
-// .. code-block:: cpp
-//
-{
-    if (_ch_alloc_tree != _ch_at_nil_ptr) {
-        fprintf(stderr, "Leaked allocations: \n");
-        while (_ch_alloc_tree != _ch_at_nil_ptr) {
-            ch_alloc_track_t* item;
-            item = _ch_alloc_tree;
-            fprintf(stderr, "%p ", item->buf);
-            _ch_at_delete_node(&_ch_alloc_tree, item);
-            _ch_free_cb(item);
-        }
-        fprintf(stderr, "\n");
-        A(0, "There is a memory leak")
-    }
-    uv_mutex_destroy(&_ch_at_lock);
-}
-
-// .. c:function::
-void
-ch_at_init(void)
-//    :noindex:
-//
-//    see: :c:func:`ch_at_init`
-//
-// .. code-block:: cpp
-//
-{
-    uv_mutex_init(&_ch_at_lock);
-    _ch_at_tree_init(&_ch_alloc_tree);
-}
+//    :param ch_remote_t* remote: Remote to connect to.
 
 // .. c:function::
 static void
-_ch_at_free(void* buf)
+_ch_wr_connect_cb(uv_connect_t* req, int status);
 //
-//    Track a freed memory allocation.
+//    Called by libuv after trying to connect. Contains the connection status.
 //
-//    :param void* buf: Pointer to the buffer to track.
+//    :param uv_connect_t* req: Connect request, containing the connection.
+//    :param int status:        Status of the connection.
 //
-// .. code-block:: cpp
-//
-{
-    ch_alloc_track_t  key;
-    ch_alloc_track_t* track;
-    key.buf = buf;
-    uv_mutex_lock(&_ch_at_lock);
-    int ret = _ch_at_delete(&_ch_alloc_tree, &key, &track);
-    uv_mutex_unlock(&_ch_at_lock);
-    assert(ret == 0);
-    _ch_free_cb(track);
-}
 
 // .. c:function::
-static void*
-_ch_at_realloc(void* buf, void* rbuf)
+static void
+_ch_wr_connect_timeout_cb(uv_timer_t* handle);
 //
-//    Track a memory reallocation.
+//    Callback which is called after the connection reaches its timeout for
+//    connecting. The timeout is set by the chirp configuration and is 5 seconds
+//    by default. When this callback is called, the connection is shutdown.
 //
-//    :param void* buf: Pointer to the buffer that has been reallocated.
-//    :param void* rbuf: Pointer to the new buffer.
+//    :param uv_timer_t* handle: uv timer handle, data contains chirp
+
+// .. c:function::
+static void
+_ch_wr_write_chirp_header_cb(uv_write_t* req, int status);
 //
-// .. code-block:: cpp
+//    Callback which is called after the messages header was written.
 //
-{
-    /* We do not track failed reallocations */
-    if (rbuf == NULL) {
-        return rbuf;
-    }
-    ch_alloc_track_t  key;
-    ch_alloc_track_t* track;
-    /* Shortcut if the allocator was able to extend the allocation */
-    if (buf == rbuf) {
-        return rbuf;
-    }
-    key.buf = buf;
-    uv_mutex_lock(&_ch_at_lock);
-    int ret = _ch_at_delete(&_ch_alloc_tree, &key, &track);
-    uv_mutex_unlock(&_ch_at_lock);
-    assert(ret == 0);
-    track->buf = rbuf;
-    ret        = _ch_at_insert(&_ch_alloc_tree, track);
-    assert(ret == 0);
-    return rbuf;
-}
-#endif
+//    The successful sending of a message over a connection triggers the
+//    message header callback, which, in its turn, then calls this callback ---
+//    if a header is present.
+//
+//    Cancels (void) if the sending was erroneous. Next data will be written if
+//    the message has data.
+//
+//    :param uv_write_t* req:  Write request.
+//    :param int status:       Write status.
+
+// .. c:function::
+static void
+_ch_wr_write_data_cb(uv_write_t* req, int status);
+//
+//    Callback which is called after data was written.
+//
+//    :param uv_write_t* req:  Write request.
+//    :param int status:       Write status.
+
+// .. c:function::
+static void
+_ch_wr_write_finish(
+        ch_chirp_t* chirp, ch_writer_t* writer, ch_connection_t* conn);
+//
+//    Finishes the current write operation, the message store on the writer is
+//    set to NULL and :c:func:`ch_chirp_finish_message` is called.
+//
+//    :param ch_chirp_t* chirp:      Pointer to a chirp instance.
+//    :param ch_writer_t* writer:    Pointer to a writer instance.
+//    :param ch_connection_t* conn:  Pointer to a connection instance.
+
+// .. c:function::
+static void
+_ch_wr_write_msg_header_cb(uv_write_t* req, int status);
+//
+//    Callback which is called after the messages header was written.
+//
+//    :param uv_write_t* req:  Write request.
+//    :param int status:       Write status.
+
+// .. c:function::
+static void
+_ch_wr_write_timeout_cb(uv_timer_t* handle);
+//
+//    Callback which is called after the writer reaches its timeout for
+//    sending. The timeout is set by the chirp configuration and is 5 seconds
+//    by default. When this callback is called, the connection is being shut
+//    down.
+//
+//    :param uv_timer_t* handle: uv timer handle, data contains chirp
+//
+// .. c:function::
+static void
+_ch_wr_enqeue_noop_if_needed(ch_remote_t* remote);
+//
+//    If remote wasn't use for 3/4 REUSE_TIME, we send a noop message
+//
+//    :param ch_remote_t* remote: Remote to send the noop to.
 
 // Definitions
 // ===========
 
 // .. c:function::
-void*
-ch_alloc(size_t size)
+static int
+_ch_wr_check_write_error(
+        ch_chirp_t*      chirp,
+        ch_writer_t*     writer,
+        ch_connection_t* conn,
+        int              status)
 //    :noindex:
 //
-//    see: :c:func:`ch_alloc`
+//    see: :c:func:`_ch_wr_check_write_error`
 //
 // .. code-block:: cpp
 //
 {
-    void* buf = _ch_alloc_cb(size);
-    /* Assert memory (do not rely on this, implement it robust: be graceful and
-     * return error to user) */
-    A(buf, "Allocation failure");
-#ifdef CH_ENABLE_ASSERTS
-    return _ch_at_alloc(buf);
-#else
-    return buf;
-#endif
-}
-
-// .. c:function::
-void
-ch_bytes_to_hex(uint8_t* bytes, size_t bytes_size, char* str, size_t str_size)
-//    :noindex:
-//
-//    see: :c:func:`ch_bytes_to_hex`
-//
-// .. code-block:: cpp
-//
-{
-    size_t i;
-    A(bytes_size * 2 + 1 <= str_size, "Not enough space for string");
-    (void) (str_size);
-    for (i = 0; i < bytes_size; i++) {
-        snprintf(str, 3, "%02X", bytes[i]);
-        str += 2;
+    A(writer->msg != NULL, "ⱳriter->msg should be set on callback");
+    (void) (writer);
+    if (status != CH_SUCCESS) {
+        LC(chirp,
+           "Write failed with uv status: %d. ",
+           "ch_connection_t:%p",
+           status,
+           (void*) conn);
+        ch_cn_shutdown(conn, CH_PROTOCOL_ERROR);
+        return CH_PROTOCOL_ERROR;
     }
-    *str = 0;
+    return CH_SUCCESS;
+}
+
+// .. c:function::
+static ch_error_t
+_ch_wr_connect(ch_remote_t* remote)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_connect`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t*      chirp  = remote->chirp;
+    ch_chirp_int_t*  ichirp = chirp->_;
+    ch_connection_t* conn   = ch_alloc(sizeof(*conn));
+    if (!conn) {
+        return CH_ENOMEM;
+    }
+    remote->conn = conn;
+    memset(conn, 0, sizeof(*conn));
+    ch_cn_node_init(conn);
+    conn->chirp        = chirp;
+    conn->port         = remote->port;
+    conn->ip_protocol  = remote->ip_protocol;
+    conn->connect.data = conn;
+    conn->remote       = remote;
+    conn->client.data  = conn;
+    int tmp_err        = uv_timer_init(ichirp->loop, &conn->connect_timeout);
+    if (tmp_err != CH_SUCCESS) {
+        EC(chirp,
+           "Initializing connect timeout failed: %d. ",
+           "ch_connection_t:%p",
+           tmp_err,
+           (void*) conn);
+        return CH_INIT_FAIL;
+    }
+    conn->connect_timeout.data = conn;
+    conn->flags |= CH_CN_INIT_CONNECT_TIMEOUT;
+    tmp_err = uv_timer_start(
+            &conn->connect_timeout,
+            _ch_wr_connect_timeout_cb,
+            ichirp->config.TIMEOUT * 1000,
+            0);
+    if (tmp_err != CH_SUCCESS) {
+        EC(chirp,
+           "Starting connect timeout failed: %d. ",
+           "ch_connection_t:%p",
+           tmp_err,
+           (void*) conn);
+        return CH_FATAL;
+    }
+
+    ch_text_address_t taddr;
+    uv_inet_ntop(
+            remote->ip_protocol,
+            remote->address,
+            taddr.data,
+            sizeof(taddr.data));
+    if (!(ichirp->config.DISABLE_ENCRYPTION || ch_is_local_addr(&taddr))) {
+        conn->flags |= CH_CN_ENCRYPTED;
+    }
+    memcpy(&conn->address, &remote->address, CH_IP_ADDR_SIZE);
+    uv_tcp_init(ichirp->loop, &conn->client);
+    conn->flags |= CH_CN_INIT_CLIENT;
+    struct sockaddr_storage addr;
+    /* No error can happen, the address was taken from a binary format */
+    ch_textaddr_to_sockaddr(remote->ip_protocol, &taddr, remote->port, &addr);
+    tmp_err = uv_tcp_connect(
+            &conn->connect,
+            &conn->client,
+            (struct sockaddr*) &addr,
+            _ch_wr_connect_cb);
+    if (tmp_err != CH_SUCCESS) {
+        E(chirp,
+          "Failed to connect to host: %s:%d (%d)",
+          taddr.data,
+          remote->port,
+          tmp_err);
+        return CH_CANNOT_CONNECT;
+    }
+    LC(chirp,
+       "Connecting to remote %s:%d. ",
+       "ch_connection_t:%p",
+       taddr.data,
+       remote->port,
+       (void*) conn);
+    return CH_SUCCESS;
 }
 
 // .. c:function::
 void
-ch_chirp_set_always_encrypt()
+_ch_wr_connect_cb(uv_connect_t* req, int status)
 //    :noindex:
 //
-//    see: :c:func:`ch_chirp_set_always_encrypt`
+//    see: :c:func:`_ch_wr_connect_cb`
 //
 // .. code-block:: cpp
 //
 {
-    _ch_always_encrypt = 1;
-}
-
-// .. c:function::
-void
-ch_free(void* buf)
-//    :noindex:
-//
-//    see: :c:func:`ch_free`
-//
-// .. code-block:: cpp
-//
-{
-#ifdef CH_ENABLE_ASSERTS
-    _ch_at_free(buf);
-#endif
-    _ch_free_cb(buf);
-}
-
-// .. c:function::
-int
-ch_is_local_addr(ch_text_address_t* addr)
-//    :noindex:
-//
-//    see: :c:func:`ch_is_local_addr`
-//
-// .. code-block:: cpp
-//
-{
-    if (_ch_always_encrypt) {
-        return 0;
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    ch_text_address_t taddr;
+    A(chirp == conn->chirp, "Chirp on connection should match");
+    uv_inet_ntop(
+            conn->ip_protocol, conn->address, taddr.data, sizeof(taddr.data));
+    if (status == CH_SUCCESS) {
+        LC(chirp,
+           "Connected to remote %s:%d. ",
+           "ch_connection_t:%p",
+           taddr.data,
+           conn->port,
+           (void*) conn);
+        /* Here we join the code called on accept. */
+        ch_pr_conn_start(chirp, conn, &conn->client, 0);
     } else {
-        return (strncmp("::1", addr->data, sizeof(addr->data)) == 0 ||
-                strncmp("127.0.0.1", addr->data, sizeof(addr->data)) == 0);
+        EC(chirp,
+           "Connection to remote failed %s:%d (%d). ",
+           "ch_connection_t:%p",
+           taddr.data,
+           conn->port,
+           status,
+           (void*) conn);
+        ch_cn_shutdown(conn, CH_CANNOT_CONNECT);
+    }
+}
+
+// .. c:function::
+static void
+_ch_wr_connect_timeout_cb(uv_timer_t* handle)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_connect_timeout_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = handle->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    LC(chirp, "Connect timed out. ", "ch_connection_t:%p", (void*) conn);
+    ch_cn_shutdown(conn, CH_TIMEOUT);
+    uv_timer_stop(&conn->connect_timeout);
+    /* We have waited long enough, we send the next message */
+    ch_remote_t  key;
+    ch_remote_t* remote = NULL;
+    ch_rm_init_from_conn(chirp, &key, conn, 1);
+    if (ch_rm_find(chirp->_->protocol.remotes, &key, &remote) == CH_SUCCESS) {
+        ch_wr_process_queues(remote);
+    }
+}
+
+// .. c:function::
+static void
+_ch_wr_enqeue_noop_if_needed(ch_remote_t* remote)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_enqeue_noop_if_needed`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t*     chirp  = remote->chirp;
+    ch_chirp_int_t* ichirp = chirp->_;
+    ch_config_t*    config = &ichirp->config;
+    ch_message_t*   noop   = remote->noop;
+    uint64_t        now    = uv_now(ichirp->loop);
+    uint64_t        delta  = (1000 * config->REUSE_TIME / 4 * 3);
+    if (now - remote->timestamp > delta) {
+        if (noop == NULL) {
+            remote->noop = ch_alloc(sizeof(*remote->noop));
+            if (remote->noop == NULL) {
+                return; /* ENOMEM: Noop are not important, we don't send it. */
+            }
+            noop = remote->noop;
+            memset(noop, 0, sizeof(*noop));
+            memcpy(noop->address, remote->address, CH_IP_ADDR_SIZE);
+            noop->ip_protocol = remote->ip_protocol;
+            noop->port        = remote->port;
+            noop->type        = CH_MSG_NOOP;
+        }
+        /* The noop is not enqueued yet, enqueue it */
+        if (!(noop->_flags & CH_MSG_USED) && noop->_next == NULL) {
+            LC(chirp, "Sending NOOP.", "ch_remote_t:%p", remote);
+            ch_msg_enqueue(&remote->cntl_msg_queue, noop);
+        }
     }
 }
 
 // .. c:function::
 void
-ch_random_ints_as_bytes(uint8_t* bytes, size_t len)
+_ch_wr_send_ts_cb(uv_async_t* handle)
 //    :noindex:
 //
-//    see: :c:func:`ch_random_ints_as_bytes`
+//    see: :c:func:`_ch_wr_send_ts_cb`
 //
 // .. code-block:: cpp
 //
 {
-    size_t i;
-    int    tmp_rand;
-    A(len % 4 == 0, "len must be multiple of four");
-#ifdef _WIN32
-#if RAND_MAX < 16384 || INT_MAX < 16384 // 2**14
-#error Seriously broken compiler or platform
-#else  // RAND_MAX < 16384 || INT_MAX < 16384
-    for (i = 0; i < len; i += 2) {
-        tmp_rand = rand();
-        memcpy(bytes + i, &tmp_rand, 2);
+    ch_chirp_t* chirp = handle->data;
+    ch_chirp_check_m(chirp);
+    ch_chirp_int_t* ichirp = chirp->_;
+    uv_mutex_lock(&ichirp->send_ts_queue_lock);
+
+    ch_message_t* cur;
+    ch_msg_dequeue(&ichirp->send_ts_queue, &cur);
+    while (cur != NULL) {
+        ch_chirp_send(chirp, cur, cur->_send_cb);
+        ch_msg_dequeue(&ichirp->send_ts_queue, &cur);
     }
-#endif // RAND_MAX < 16384 || INT_MAX < 16384
-#else  // _WIN32
-#if RAND_MAX < 1073741824 || INT_MAX < 1073741824 // 2**30
-#ifdef CH_ACCEPT_STRANGE_PLATFORM
-    /* WTF, fallback platform */
-    (void) (tmp_rand);
-    for (i = 0; i < len; i++) {
-        bytes[i] = ((unsigned int) rand()) % 256;
-    }
-#else // ACCEPT_STRANGE_PLATFORM
-/* cppcheck-suppress preprocessorErrorDirective */
-#error Unexpected RAND_MAX / INT_MAX, define CH_ACCEPT_STRANGE_PLATFORM
-#endif // ACCEPT_STRANGE_PLATFORM
-#else  // RAND_MAX < 1073741824 || INT_MAX < 1073741824
-    /* Tested: this is 4 times faster*/
-    for (i = 0; i < len; i += 4) {
-        tmp_rand = rand();
-        memcpy(bytes + i, &tmp_rand, 4);
-    }
-#endif // RAND_MAX < 1073741824 || INT_MAX < 1073741824
-#endif // _WIN32
+    uv_mutex_unlock(&ichirp->send_ts_queue_lock);
 }
 
 // .. c:function::
-void*
-ch_realloc(void* buf, size_t size)
+static void
+_ch_wr_write_chirp_header_cb(uv_write_t* req, int status)
 //    :noindex:
 //
-//    see: :c:func:`ch_realloc`
+//    see: :c:func:`_ch_wr_write_chirp_header_cb`
 //
 // .. code-block:: cpp
 //
 {
-    void* rbuf = _ch_realloc_cb(buf, size);
-    /* Assert memory (do not rely on this, implement it robust: be graceful and
-     * return error to user) */
-    A(rbuf, "Reallocation failure");
-#ifdef CH_ENABLE_ASSERTS
-    return _ch_at_realloc(buf, rbuf);
-#else
-    return rbuf;
-#endif
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    ch_writer_t*  writer = &conn->writer;
+    ch_message_t* msg    = writer->msg;
+    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
+        return;
+    }
+    if (msg->data_len > 0) {
+        ch_cn_write(conn, msg->data, msg->data_len, _ch_wr_write_data_cb);
+    } else {
+        _ch_wr_write_finish(chirp, writer, conn);
+    }
+}
+
+// .. c:function::
+static void
+_ch_wr_write_data_cb(uv_write_t* req, int status)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_write_data_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    ch_writer_t* writer = &conn->writer;
+    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
+        return;
+    }
+    _ch_wr_write_finish(chirp, writer, conn);
+}
+
+// .. c:function::
+static void
+_ch_wr_write_finish(
+        ch_chirp_t* chirp, ch_writer_t* writer, ch_connection_t* conn)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_write_finish`
+//
+// .. code-block:: cpp
+//
+{
+    ch_message_t* msg = writer->msg;
+    A(msg != NULL, "Writer has no message");
+    if (!(msg->type & CH_MSG_REQ_ACK)) {
+        msg->_flags |= CH_MSG_ACK_RECEIVED; /* Emulate ACK */
+    }
+    msg->_flags |= CH_MSG_WRITE_DONE;
+    writer->msg     = NULL;
+    conn->timestamp = uv_now(chirp->_->loop);
+    if (conn->remote != NULL) {
+        conn->remote->timestamp = conn->timestamp;
+    }
+    ch_chirp_finish_message(chirp, conn, msg, CH_SUCCESS);
+}
+
+// .. c:function::
+static void
+_ch_wr_write_msg_header_cb(uv_write_t* req, int status)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_write_msg_header_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    ch_writer_t*  writer = &conn->writer;
+    ch_message_t* msg    = writer->msg;
+    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
+        return;
+    }
+    if (msg->header_len > 0) {
+        ch_cn_write(
+                conn,
+                msg->header,
+                msg->header_len,
+                _ch_wr_write_chirp_header_cb);
+    } else if (msg->data_len > 0) {
+        ch_cn_write(conn, msg->data, msg->data_len, _ch_wr_write_data_cb);
+    } else {
+        _ch_wr_write_finish(chirp, writer, conn);
+    }
+}
+
+// .. c:function::
+static void
+_ch_wr_write_timeout_cb(uv_timer_t* handle)
+//    :noindex:
+//
+//    see: :c:func:`_ch_wr_write_timeout_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = handle->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    LC(chirp, "Write timed out. ", "ch_connection_t:%p", (void*) conn);
+    ch_cn_shutdown(conn, CH_TIMEOUT);
 }
 
 // .. c:function::
 CH_EXPORT
-void
-ch_set_alloc_funcs(
-        ch_alloc_cb_t alloc, ch_realloc_cb_t realloc, ch_free_cb_t free)
+ch_error_t
+ch_chirp_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
 //    :noindex:
 //
-//    see: :c:func:`ch_set_alloc_funcs`
+//    see: :c:func:`ch_wr_send`
 //
 // .. code-block:: cpp
 //
 {
-    _ch_alloc_cb   = alloc;
-    _ch_realloc_cb = realloc;
-    _ch_free_cb    = free;
+    ch_chirp_check_m(chirp);
+    if (chirp->_->config.ACKNOWLEDGE != 0) {
+        msg->type = CH_MSG_REQ_ACK;
+    } else {
+        msg->type = 0;
+    }
+    return ch_wr_send(chirp, msg, send_cb);
+}
+
+// .. c:function::
+CH_EXPORT
+ch_error_t
+ch_chirp_send_ts(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
+//    :noindex:
+//
+//    see: :c:func:`ch_chirp_send_ts`
+//
+// .. code-block:: cpp
+//
+{
+    A(chirp->_init == CH_CHIRP_MAGIC, "Not a ch_chirp_t*");
+    ch_chirp_int_t* ichirp = chirp->_;
+    uv_mutex_lock(&ichirp->send_ts_queue_lock);
+    if (msg->_flags & CH_MSG_USED) {
+        EC(chirp, "Message already used. ", "ch_message_t:%p", (void*) msg);
+        return CH_USED;
+    }
+    msg->_send_cb = send_cb;
+    ch_msg_enqueue(&ichirp->send_ts_queue, msg);
+    uv_mutex_unlock(&ichirp->send_ts_queue_lock);
+    uv_async_send(&ichirp->send_ts);
+    return CH_SUCCESS;
+}
+
+// .. c:function::
+void
+ch_wr_free(ch_writer_t* writer)
+//    :noindex:
+//
+//    see: :c:func:`ch_wr_free`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn = writer->send_timeout.data;
+    uv_timer_stop(&writer->send_timeout);
+    uv_close((uv_handle_t*) &writer->send_timeout, ch_cn_close_cb);
+    conn->shutdown_tasks += 1;
 }
 
 // .. c:function::
 ch_error_t
-ch_textaddr_to_sockaddr(
-        int                      af,
-        ch_text_address_t*       text,
-        uint16_t                 port,
-        struct sockaddr_storage* addr)
+ch_wr_init(ch_writer_t* writer, ch_connection_t* conn)
 //    :noindex:
 //
-//    see: :c:func:`ch_textaddr_to_sockaddr`
+//    see: :c:func:`ch_wr_init`
 //
 // .. code-block:: cpp
 //
 {
-    if (af == AF_INET6) {
-        return uv_ip6_addr(text->data, port, (struct sockaddr_in6*) addr);
-    } else {
-        A(af, "Unknown IP protocol");
-        return uv_ip4_addr(text->data, port, (struct sockaddr_in*) addr);
+
+    ch_chirp_t*     chirp  = conn->chirp;
+    ch_chirp_int_t* ichirp = chirp->_;
+    int             tmp_err;
+    tmp_err = uv_timer_init(ichirp->loop, &writer->send_timeout);
+    if (tmp_err != CH_SUCCESS) {
+        EC(chirp,
+           "Initializing send timeout failed: %d. ",
+           "ch_connection_t:%p",
+           tmp_err,
+           (void*) conn);
+        return CH_INIT_FAIL;
     }
+    writer->send_timeout.data = conn;
+    return CH_SUCCESS;
 }
 
 // .. c:function::
-CH_EXPORT
-void
-ch_write_log(
-        ch_chirp_t* chirp,
-        char*       file,
-        int         line,
-        char*       message,
-        char*       clear,
-        int         error,
-        ...)
+ch_error_t
+ch_wr_process_queues(ch_remote_t* remote)
 //    :noindex:
 //
-//    see: :c:func:`ch_write_log`
+//    see: :c:func:`ch_wr_process_queues`
 //
 // .. code-block:: cpp
 //
 {
-    va_list args;
-    va_start(args, error);
-    char* tfile = strrchr(file, '/');
-    if (tfile != NULL) {
-        file = tfile + 1;
-    }
-    char buf1[1024];
-    if (chirp->_log != NULL) {
-        char buf2[1024];
-        snprintf(buf1, 1024, "%s:%5d %s %s", file, line, message, clear);
-        vsnprintf(buf2, 1024, buf1, args);
-        chirp->_log(buf2, error);
-    } else {
-        uint8_t log_id = ((uint8_t) chirp->_->identity[0]) % 8;
-        char*   tmpl;
-        char*   first;
-        char*   second;
-        if (error) {
-            tmpl   = "%s%02X%02X%s %17s:%5d Error: %s%s %s%s\n";
-            first  = _ch_lg_err;
-            second = _ch_lg_err;
+    AP(ch_at_allocated(remote), "Remote (%p) not allocated", (void*) remote);
+    ch_chirp_t* chirp = remote->chirp;
+    ch_chirp_check_m(chirp);
+    ch_connection_t* conn = remote->conn;
+    ch_message_t*    msg  = NULL;
+    if (conn == NULL) {
+        if (remote->flags & CH_RM_CONN_BLOCKED) {
+            return CH_BUSY;
         } else {
-            tmpl   = "%s%02X%02X%s %17s:%5d %s%s %s%s\n";
-            first  = _ch_lg_colors[log_id];
-            second = _ch_lg_reset;
+            /* Only connect of the queue is not empty */
+            if (remote->msg_queue != NULL || remote->cntl_msg_queue != NULL) {
+                return _ch_wr_connect(remote);
+            }
         }
-        /* From doc: If the format is exhausted while arguments remain, the
-         * excess arguments shall be evaluated but are otherwise ignored. */
-        snprintf(
-                buf1,
-                1024,
-                tmpl,
-                first,
-                chirp->_->identity[0],
-                chirp->_->identity[1],
-                second,
-                file,
-                line,
-                _ch_lg_colors[log_id],
-                message,
-                _ch_lg_reset,
-                clear);
-        vfprintf(stderr, buf1, args);
-        fflush(stderr);
+    } else {
+        AP(ch_at_allocated(conn), "Conn (%p) not allocated", (void*) conn);
+        if (!(conn->flags & CH_CN_CONNECTED) ||
+            conn->flags & CH_CN_SHUTTING_DOWN) {
+            return CH_BUSY;
+        } else if (conn->writer.msg != NULL) {
+            return CH_BUSY;
+        } else if (remote->cntl_msg_queue != NULL) {
+            ch_msg_dequeue(&remote->cntl_msg_queue, &msg);
+            A(msg->type & CH_MSG_ACK || msg->type & CH_MSG_NOOP,
+              "ACK/NOOP expected");
+            ch_wr_write(conn, msg);
+            return CH_SUCCESS;
+        } else if (remote->msg_queue != NULL) {
+            if (chirp->_->config.ACKNOWLEDGE) {
+                if (remote->wait_ack_message == NULL) {
+                    ch_msg_dequeue(&remote->msg_queue, &msg);
+                    remote->wait_ack_message = msg;
+                    ch_wr_write(conn, msg);
+                    return CH_SUCCESS;
+                } else {
+                    return CH_BUSY;
+                }
+            } else {
+                ch_msg_dequeue(&remote->msg_queue, &msg);
+                A(!(msg->type & CH_MSG_REQ_ACK), "REQ_ACK unexpected");
+                ch_wr_write(conn, msg);
+                return CH_SUCCESS;
+            }
+        }
     }
-    va_end(args);
+    return CH_EMPTY;
 }
-// ==========
-// Connection
-// ==========
+
+// .. c:function::
+ch_error_t
+ch_wr_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
+//    :noindex:
+//
+//    see: :c:func:`ch_wr_send`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_int_t* ichirp = chirp->_;
+    if (ichirp->flags & CH_CHIRP_CLOSING || ichirp->flags & CH_CHIRP_CLOSED) {
+        if (send_cb != NULL) {
+            send_cb(chirp, msg, CH_SHUTDOWN);
+        }
+        return CH_SHUTDOWN;
+    }
+    ch_remote_t  search_remote;
+    ch_remote_t* remote;
+    msg->_send_cb = send_cb;
+    A(!(msg->_flags & CH_MSG_USED), "Message should not be used");
+    A(!((msg->_flags & CH_MSG_ACK_RECEIVED) ||
+        (msg->_flags & CH_MSG_WRITE_DONE)),
+      "No write state should be set");
+    msg->_flags |= CH_MSG_USED;
+    ch_protocol_t* protocol = &ichirp->protocol;
+
+    ch_rm_init_from_msg(chirp, &search_remote, msg, 0);
+    if (ch_rm_find(protocol->remotes, &search_remote, &remote) != CH_SUCCESS) {
+        remote = ch_alloc(sizeof(*remote));
+        LC(chirp, "Remote allocated", "ch_remote_t:%p", remote);
+        if (remote == NULL) {
+            if (send_cb != NULL) {
+                send_cb(chirp, msg, CH_ENOMEM);
+            }
+            return CH_ENOMEM;
+        }
+        *remote     = search_remote;
+        int tmp_err = ch_rm_insert(&protocol->remotes, remote);
+        A(tmp_err == 0, "Inserting remote failed");
+        (void) (tmp_err);
+    }
+    remote->serial += 1;
+    msg->serial = remote->serial;
+    /* Remote isn't used for 3/4 REUSE_TIME we send a noop */
+    _ch_wr_enqeue_noop_if_needed(remote);
+
+    int queued = 0;
+    if (msg->type & CH_MSG_ACK || msg->type & CH_MSG_NOOP) {
+        queued = remote->cntl_msg_queue != NULL;
+        ch_msg_enqueue(&remote->cntl_msg_queue, msg);
+    } else {
+        queued = remote->msg_queue != NULL;
+        ch_msg_enqueue(&remote->msg_queue, msg);
+    }
+
+    ch_wr_process_queues(remote);
+    if (queued)
+        return CH_QUEUED;
+    else
+        return CH_SUCCESS;
+}
+
+// .. c:function::
+void
+ch_wr_write(ch_connection_t* conn, ch_message_t* msg)
+//    :noindex:
+//
+//    see: :c:func:`ch_wr_write`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t*     chirp  = conn->chirp;
+    ch_writer_t*    writer = &conn->writer;
+    ch_chirp_int_t* ichirp = chirp->_;
+    A(writer->msg == NULL, "Message should be null on new write");
+    writer->msg = msg;
+    int tmp_err = uv_timer_start(
+            &writer->send_timeout,
+            _ch_wr_write_timeout_cb,
+            ichirp->config.TIMEOUT * 1000,
+            0);
+    if (tmp_err != CH_SUCCESS) {
+        EC(chirp,
+           "Starting send timeout failed: %d. ",
+           "ch_connection_t:%p",
+           tmp_err,
+           (void*) conn);
+    }
+
+    ch_sr_msg_to_buf(msg, writer->net_msg);
+    ch_cn_write(
+            conn,
+            writer->net_msg,
+            CH_SR_WIRE_MESSAGE_SIZE,
+            _ch_wr_write_msg_header_cb);
+}
+// ======
+// Remote
+// ======
 //
 
 // Project includes
@@ -5872,71 +6153,193 @@ ch_write_log(
 //
 // .. code-block:: cpp
 //
-/* #include "connection.h" */
-/* #include "chirp.h" */
-/* #include "common.h" */
 /* #include "remote.h" */
+/* #include "chirp.h" */
 /* #include "util.h" */
 
-// System includes
-// ===============
+// rbtree prototypes
+// =================
+//
+// .. c:function::
+static int
+ch_remote_cmp(ch_remote_t* x, ch_remote_t* y)
+//
+//    Compare operator for connections.
+//
+//    :param ch_remote_t* x: First remote instance to compare
+//    :param ch_remote_t* y: Second remote instance to compare
+//
+//    :return: the comparision between
+//                 - the IP protocols, if they are not the same, or
+//                 - the addresses, if they are not the same, or
+//                 - the ports
+//    :rtype: int
 //
 // .. code-block:: cpp
 //
-#include <openssl/err.h>
+{
+    if (x->ip_protocol != y->ip_protocol) {
+        return x->ip_protocol - y->ip_protocol;
+    } else {
+        int tmp_cmp =
+                memcmp(x->address,
+                       y->address,
+                       x->ip_protocol == AF_INET6 ? CH_IP_ADDR_SIZE
+                                                  : CH_IP4_ADDR_SIZE);
+        if (tmp_cmp != 0) {
+            return tmp_cmp;
+        } else {
+            return x->port - y->port;
+        }
+    }
+}
 
-// Data Struct Prototypes
-// ======================
+rb_bind_impl_m(ch_rm, ch_remote_t) CH_ALLOW_NL;
+
+// stack prototypes
+// ================
 //
 // .. code-block:: cpp
 
-rb_bind_impl_m(ch_cn, ch_connection_t) CH_ALLOW_NL;
+qs_stack_bind_impl_m(ch_rm_st, ch_remote_t) CH_ALLOW_NL;
 
-qs_stack_bind_impl_m(ch_cn_st, ch_connection_t) CH_ALLOW_NL;
+// Definitions
+// ===========
+//
+// .. code-block:: cpp
+
+static void
+_ch_rm_init(ch_chirp_t* chirp, ch_remote_t* remote, int key)
+//
+//    Initialize remote
+//
+// .. code-block:: cpp
+//
+{
+    memset(remote, 0, sizeof(*remote));
+    ch_rm_node_init(remote);
+    remote->chirp = chirp;
+    if (!key) {
+        ch_random_ints_as_bytes(
+                (uint8_t*) &remote->serial, sizeof(remote->serial));
+        remote->timestamp = uv_now(chirp->_->loop);
+    }
+}
+
+// .. c:function::
+void
+ch_rm_init_from_msg(
+        ch_chirp_t* chirp, ch_remote_t* remote, ch_message_t* msg, int key)
+//    :noindex:
+//
+//    see: :c:func:`ch_rm_init_from_msg`
+//
+// .. code-block:: cpp
+//
+{
+    _ch_rm_init(chirp, remote, key);
+    remote->ip_protocol = msg->ip_protocol;
+    remote->port        = msg->port;
+    memcpy(&remote->address, &msg->address, CH_IP_ADDR_SIZE);
+    remote->conn = NULL;
+}
+
+// .. c:function::
+void
+ch_rm_init_from_conn(
+        ch_chirp_t* chirp, ch_remote_t* remote, ch_connection_t* conn, int key)
+//    :noindex:
+//
+//    see: :c:func:`ch_rm_init_from_conn`
+//
+// .. code-block:: cpp
+//
+{
+    _ch_rm_init(chirp, remote, key);
+    remote->ip_protocol = conn->ip_protocol;
+    remote->port        = conn->port;
+    memcpy(&remote->address, &conn->address, CH_IP_ADDR_SIZE);
+    remote->conn = NULL;
+}
+
+// .. c:function::
+void
+ch_rm_free(ch_remote_t* remote)
+//    :noindex:
+//
+//    see: :c:func:`ch_rm_free`
+//
+// .. code-block:: cpp
+//
+{
+    LC(remote->chirp, "Remote freed", "ch_remote_t:%p", remote);
+    if (remote->noop != NULL) {
+        ch_free(remote->noop);
+    }
+    ch_free(remote);
+}
+// ======
+// Reader
+// ======
+//
+
+// Project includes
+// ================
+//
+// .. code-block:: cpp
+//
+/* #include "reader.h" */
+/* #include "chirp.h" */
+/* #include "common.h" */
+/* #include "connection.h" */
+/* #include "remote.h" */
+/* #include "util.h" */
+/* #include "writer.h" */
 
 // Declarations
 // ============
 
 // .. c:function::
 static void
-_ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error);
+_ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read);
 //
-//    Abort one message in queue, because connecting failed.
+//    Handle a handshake on the given connection.
 //
-//    :param ch_remote_t* remote: Remote failed to connect.
-//    :param ch_error_t error: Status returned by connect.
-
-// .. c:function::
-static ch_error_t
-_ch_cn_allocate_buffers(ch_connection_t* conn);
+//    Ensures, that the byte count which shall be read is at least the same as
+//    the handshake size.
 //
-//    Allocate the connections communication buffers.
+//    The given buffer gets copied into the handshake structure of the reader.
+//    Then the port, the maximum time until a timeout happens and the remote
+//    identity are applied to the given connection coming from the readers
+//    handshake.
 //
-//    :param ch_connection_t* conn: Connection
+//    It is then ensured, that the address of the peer connected to the TCP
+//    handle (TCP stream) of the connections client can be resolved.
 //
+//    If the latter was successful, the IP protocol and address are then applied
+//    from the resolved address structure to the connection.
+//
+//    The given connection gets then searched on the protocols pool of
+//    connections. If the connection is already known, the found duplicate gets
+//    removed from the pool of connections and gets then added to another pool
+//    (of the protocol), holding only such old connections.
+//
+//    Finally, the given connection is added to the protocols pool of
+//    connections.
+//
+//    :param ch_connection_t* conn: Pointer to a connection instance.
+//    :param ch_readert* reader:    Pointer to a reader instance. Its handshake
+//                                  data structure is the target of this
+//                                  handshake
+//    :param ch_buf* buf:           Buffer containing bytes read, acts as data
+//                                  source
+//    :param size_t read:           Count of bytes read
 //
 // .. c:function::
 static void
-_ch_cn_closing(ch_connection_t* conn);
+_ch_rd_handshake_cb(uv_write_t* req, int status);
 //
-//    Called by ch_cn_shutdown to enter the closing stage.
-//
-//    :param ch_connection_t: Connection to close
-
-// .. c:function::
-static void
-_ch_cn_partial_write(ch_connection_t* conn);
-//
-//    Called by libuv when pending data has been sent.
-//
-//    :param ch_connection_t* conn: Connection
-//
-
-// .. c:function::
-static void
-_ch_cn_send_pending_cb(uv_write_t* req, int status);
-//
-//    Called during handshake by libuv when pending data is sent.
+//    Called when handshake is sent.
 //
 //    :param uv_write_t* req: Write request type, holding the
 //                            connection handle
@@ -5945,669 +6348,669 @@ _ch_cn_send_pending_cb(uv_write_t* req, int status);
 
 // .. c:function::
 static void
-_ch_cn_write_cb(uv_write_t* req, int status);
+_ch_rd_handle_msg(
+        ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg);
 //
-//    Callback used for ch_cn_write.
+//    Send ack and call message-handler
 //
-//    :param uv_write_t* req: Write request
-//    :param int status: Write status
+//    :param ch_connection_t* conn:  Pointer to a connection instance.
+//    :param ch_reader_t* reader:    Pointer to a reader instance.
+//    :param ch_message_t* msg:      Message that was received
 //
 
+// .. c:function::
+static ssize_t
+_ch_rd_read_buffer(
+        ch_connection_t* conn,
+        ch_reader_t*     reader,
+        ch_message_t*    msg,
+        ch_buf*          src_buf,
+        size_t           to_read,
+        char**           assign_buf,
+        ch_buf*          dest_buf,
+        size_t           dest_buf_size,
+        uint32_t         expected,
+        int              free_flag,
+        ssize_t*         bytes_handled);
+//
+//    Read data from the read buffer provided by libuv ``src_buf`` to the field
+//    of the message ``assign_buf``. A preallocated buffer will be used if the
+//    message is small enough, otherwise a buffer will be allocated. The
+//    function also handles partial reads.
+
+// .. c:function::
+static inline ssize_t
+_ch_rd_read_step(
+        ch_connection_t* conn,
+        ch_buf*          buf,
+        size_t           bytes_read,
+        ssize_t          bytes_handled,
+        int*             stop,
+        int*             cont);
+//
+//    One step in the reader state machine.
+//
+//    :param ch_connection_t* conn: Connection the data was read from.
+//    :param void* buffer:          The buffer containing ``read`` bytes read.
+//    :param size_t bytes_read:     The bytes read.
+//    :param size_t bytes_handler:  The bytes handled in the last step
+//    :param int* stop:             (Out) Stop the reading process.
+//    :param int* cont:             (Out) Request continuation
+//
+
+// .. c:function::
+static inline ch_error_t
+_ch_rd_verify_msg(ch_connection_t* conn, ch_message_t* msg);
+//
+//    One step in the reader state machine.
+//
+//    :param ch_connection_t* conn: Connection the message came from
+//    :param ch_message_t* msg:     Message to verify
+
+//
 // Definitions
 // ===========
+
+// .. c:type:: _ch_rd_state_names
+//
+//    Names of reader states for logging.
 //
 // .. code-block:: cpp
-
-MINMAX_FUNCS(size_t)
+//
+char* _ch_rd_state_names[] = {
+        "CH_RD_START",
+        "CH_RD_HANDSHAKE",
+        "CH_RD_WAIT",
+        "CH_RD_HANDLER",
+        "CH_RD_HEADER",
+        "CH_RD_DATA",
+};
 
 // .. c:function::
 static void
-_ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error)
+_ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read)
 //    :noindex:
 //
-//    see: :c:func:`_ch_cn_abort_one_message`
+//    see: :c:func:`_ch_rd_handshake`
 //
 // .. code-block:: cpp
 //
 {
-    ch_message_t* msg = NULL;
-    if (remote->cntl_msg_queue != NULL) {
-        ch_msg_dequeue(&remote->cntl_msg_queue, &msg);
-    } else if (remote->msg_queue != NULL) {
-        ch_msg_dequeue(&remote->msg_queue, &msg);
+    ch_remote_t       search_remote;
+    ch_connection_t*  old_conn = NULL;
+    ch_connection_t*  tmp_conn = NULL;
+    ch_chirp_t*       chirp    = conn->chirp;
+    ch_remote_t*      remote   = NULL;
+    ch_chirp_int_t*   ichirp   = chirp->_;
+    ch_protocol_t*    protocol = &ichirp->protocol;
+    ch_sr_handshake_t hs_tmp;
+    uv_timer_stop(&conn->connect_timeout);
+    conn->flags |= CH_CN_CONNECTED;
+    if (conn->flags & CH_CN_INCOMING) {
+        A(ch_cn_delete(&protocol->handshake_conns, conn, &tmp_conn) == 0,
+          "Handshake should be tracked");
+        A(conn == tmp_conn, "Deleted wrong connection");
     }
-    if (msg != NULL) {
+    if (read < CH_SR_HANDSHAKE_SIZE) {
+        EC(chirp,
+           "Illegal handshake size -> shutdown. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+        ch_cn_shutdown(conn, CH_PROTOCOL_ERROR);
+        return;
+    }
+    ch_sr_buf_to_hs(buf, &hs_tmp);
+    conn->port = hs_tmp.port;
+    memcpy(conn->remote_identity, hs_tmp.identity, CH_ID_SIZE);
+    ch_rm_init_from_conn(chirp, &search_remote, conn, 0);
+    if (ch_rm_find(protocol->remotes, &search_remote, &remote) != CH_SUCCESS) {
+        remote = ch_alloc(sizeof(*remote));
+        LC(chirp, "Remote allocated", "ch_remote_t:%p", remote);
+        if (remote == NULL) {
+            ch_cn_shutdown(conn, CH_ENOMEM);
+            return;
+        }
+        *remote     = search_remote;
+        int tmp_err = ch_rm_insert(&protocol->remotes, remote);
+        A(tmp_err == 0, "Inserting remote failed");
+        (void) (tmp_err);
+    }
+    conn->remote = remote;
+    /* If there is a network race condition we replace the old connection and
+     * leave the old one for garbage collection. */
+    old_conn     = remote->conn;
+    remote->conn = conn;
+    /* By definition, the connection that last completes the handshake is the
+     * new one, the other the old one. Since we store outgoing connections at
+     * the moment we connect, both connections might fight the place in
+     * old_conns. It would be possible to prevent this, but removing the new
+     * connection from old_conns is easier and just as correct. */
+    ch_cn_delete(&protocol->old_connections, conn, &tmp_conn);
+    if (old_conn != NULL) {
+        /* If we found the current connection everything is ok */
+        if (conn != old_conn) {
+            L(chirp,
+              "ch_connection_t:%p replaced ch_connection_t:%p",
+              (void*) conn,
+              (void*) old_conn);
+            ch_cn_insert(&protocol->old_connections, old_conn);
+        }
+    }
 #ifdef CH_ENABLE_LOGGING
-        {
-            char id[CH_ID_SIZE * 2 + 1];
-            ch_bytes_to_hex(
-                    msg->identity, sizeof(msg->identity), id, sizeof(id));
-            if (msg->type & CH_MSG_ACK) {
-                LC(remote->chirp,
-                   "Abort message on queue id: %s\n"
-                   "                             "
-                   "ch_message_t:%p",
-                   id,
-                   (void*) msg);
-            }
-        }
+    {
+        ch_text_address_t addr;
+        uint8_t*          identity = conn->remote_identity;
+        char              id[CH_ID_SIZE * 2 + 1];
+        uv_inet_ntop(conn->ip_protocol, conn->address, addr.data, sizeof(addr));
+        ch_bytes_to_hex(identity, sizeof(identity), id, sizeof(id));
+        LC(chirp,
+           "Handshake with remote %s:%d (%s) done. ",
+           "ch_connection_t:%p",
+           addr.data,
+           conn->port,
+           id,
+           (void*) conn);
+    }
 #endif
-        ch_send_cb_t cb = msg->_send_cb;
-        if (cb != NULL) {
-            msg->_send_cb = NULL;
-            cb(remote->chirp, msg, error);
-        }
+    A(conn->remote != NULL, "The remote has to be set");
+    ch_wr_process_queues(conn->remote);
+}
+
+// .. c:function::
+static void
+_ch_rd_handle_msg(ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg)
+//    :noindex:
+//
+//    see: :c:func:`_ch_rd_handle_msg`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t*     chirp  = conn->chirp;
+    ch_chirp_int_t* ichirp = chirp->_;
+#ifdef CH_ENABLE_LOGGING
+    {
+        ch_text_address_t addr;
+        uint8_t*          identity = conn->remote_identity;
+        char              id[CH_ID_SIZE * 2 + 1];
+        uv_inet_ntop(conn->ip_protocol, conn->address, addr.data, sizeof(addr));
+        ch_bytes_to_hex(identity, sizeof(identity), id, sizeof(id));
+        LC(chirp,
+           "Read message with id: %s\n"
+           "                             "
+           "serial:%u\n"
+           "                             "
+           "from %s:%d type:%d data_len:%u. ",
+           "ch_connection_t:%p",
+           id,
+           msg->serial,
+           addr.data,
+           conn->port,
+           msg->type,
+           msg->data_len,
+           (void*) conn);
+    }
+#endif
+
+    reader->state   = CH_RD_WAIT;
+    reader->handler = NULL;
+    conn->timestamp = uv_now(ichirp->loop);
+    if (conn->remote != NULL) {
+        conn->remote->timestamp = conn->timestamp;
+    }
+
+    /* Only increase refcnt if we know ch_chirp_release_message is called */
+    reader->pool->refcnt += 1;
+    if (ichirp->recv_cb != NULL) {
+        ichirp->recv_cb(chirp, msg);
+    } else {
+        E(chirp, "No receiving callback function registered", CH_NO_ARG);
+        ch_chirp_release_message(msg);
     }
 }
 
 // .. c:function::
-static ch_error_t
-_ch_cn_allocate_buffers(ch_connection_t* conn)
+static void
+_ch_rd_handshake_cb(uv_write_t* req, int status)
 //    :noindex:
 //
-//    See: :c:func:`_ch_cn_allocate_buffers`
+//    see: :c:func:`_ch_rd_handshake_cb`
 //
 // .. code-block:: cpp
 //
 {
-    ch_chirp_t* chirp = conn->chirp;
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
     ch_chirp_check_m(chirp);
-    ch_chirp_int_t* ichirp = chirp->_;
-    size_t          size   = ichirp->config.BUFFER_SIZE;
-    if (size == 0) {
-        size = CH_BUFFER_SIZE;
+    if (status < 0) {
+        LC(chirp,
+           "Sending handshake failed. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+        ch_cn_shutdown(conn, CH_WRITE_ERROR);
+        return;
     }
-    conn->buffer_uv   = ch_alloc(size);
-    conn->buffer_size = size;
+    /* Check if we already have a message (just after handshake)
+     * this is here so we have no overlapping ch_cn_write. If the read causes a
+     * ack message to be sent and the write of the handshake is not finished,
+     * chirp would assert or be in undefined state. */
     if (conn->flags & CH_CN_ENCRYPTED) {
-        conn->buffer_wtls = ch_alloc(size);
-        size              = ch_min_size_t(size, CH_ENC_BUFFER_SIZE);
-        conn->buffer_rtls = ch_alloc(size);
+        int stop;
+        ch_pr_decrypt_read(conn, &stop);
     }
-    int alloc_nok = 0;
-    if (conn->flags & CH_CN_ENCRYPTED) {
-        alloc_nok =
-                !(conn->buffer_uv && conn->buffer_wtls && conn->buffer_rtls);
-    } else {
-        alloc_nok = !conn->buffer_uv;
+}
+
+// .. c:function::
+static inline ssize_t
+_ch_rd_read_step(
+        ch_connection_t* conn,
+        ch_buf*          buf,
+        size_t           bytes_read,
+        ssize_t          bytes_handled,
+        int*             stop,
+        int*             cont)
+//    :noindex:
+//
+//    see: :c:func:`ch_rd_free`
+//
+// .. code-block:: cpp
+//
+{
+    ch_message_t*    msg;
+    ch_bf_handler_t* handler;
+    ch_chirp_t*      chirp   = conn->chirp;
+    ch_chirp_int_t*  ichirp  = chirp->_;
+    ch_reader_t*     reader  = &conn->reader;
+    int              to_read = bytes_read - bytes_handled;
+
+    LC(chirp,
+       "Reader state: %s. ",
+       "ch_connection_t:%p",
+       _ch_rd_state_names[reader->state],
+       (void*) conn);
+
+    switch (reader->state) {
+    case CH_RD_START: {
+        ch_sr_handshake_t hs_tmp;
+        ch_buf            hs_buf[CH_SR_HANDSHAKE_SIZE];
+        hs_tmp.port = ichirp->public_port;
+        memcpy(hs_tmp.identity, ichirp->identity, CH_ID_SIZE);
+        ch_sr_hs_to_buf(&hs_tmp, hs_buf);
+        ch_cn_write(conn, hs_buf, CH_SR_HANDSHAKE_SIZE, _ch_rd_handshake_cb);
+        reader->state = CH_RD_HANDSHAKE;
+        break;
     }
-    if (alloc_nok) {
+    case CH_RD_HANDSHAKE: {
+        if (bytes_read == 0)
+            return -1;
+        /* We expect that complete handshake arrives at once,
+         * check in _ch_rd_handshake */
+        _ch_rd_handshake(conn, buf + bytes_handled, to_read);
+        bytes_handled += sizeof(ch_sr_handshake_t);
+        reader->state = CH_RD_WAIT;
+        break;
+    }
+    case CH_RD_WAIT: {
+        if (bytes_read == 0)
+            return -1;
+        ch_message_t* wire_msg = &reader->wire_msg;
+        ssize_t       reading  = CH_SR_WIRE_MESSAGE_SIZE - reader->bytes_read;
+        if (to_read >= reading) {
+            /* We can read everything */
+            memcpy(reader->net_msg + reader->bytes_read,
+                   buf + bytes_handled,
+                   reading);
+            reader->bytes_read = 0; /* Reset partial buffer reads */
+            bytes_handled += reading;
+        } else {
+            memcpy(reader->net_msg + reader->bytes_read,
+                   buf + bytes_handled,
+                   to_read);
+            reader->bytes_read += to_read;
+            bytes_handled += to_read;
+            return bytes_handled;
+        }
+        ch_sr_buf_to_msg(reader->net_msg, wire_msg);
+        int tmp_err = _ch_rd_verify_msg(conn, wire_msg);
+        if (tmp_err != CH_SUCCESS) {
+            ch_cn_shutdown(conn, tmp_err);
+            return -1; /* Shutdown */
+        }
+        if (wire_msg->type & CH_MSG_NOOP) {
+            LC(chirp, "Received NOOP.", "ch_connection_t", conn);
+            conn->timestamp = uv_now(ichirp->loop);
+            if (conn->remote != NULL) {
+                conn->remote->timestamp = conn->timestamp;
+            }
+            break;
+        } else if (wire_msg->type & CH_MSG_ACK) {
+            ch_message_t* wam = conn->remote->wait_ack_message;
+            /* Since we abort wam on shutdown, we can receive acks for a old
+             * wam */
+            if (wam != NULL) {
+                if (memcmp(wam->identity, wire_msg->identity, CH_ID_SIZE) ==
+                    0) {
+                    wam->_flags |= CH_MSG_ACK_RECEIVED;
+                    conn->remote->wait_ack_message = NULL;
+                    ch_chirp_finish_message(chirp, conn, wam, CH_SUCCESS);
+                }
+            }
+            break;
+        } else {
+            reader->state = CH_RD_HANDLER;
+        }
+        /* Since we do not read any data in CH_RD_HANDLER, we need to ask for
+         * continuation. I wanted to solve this with a fall-though-case, but
+         * linters and compilers are complaining. */
+        *cont = 1;
+        break;
+    }
+    case CH_RD_HANDLER: {
+        ch_message_t* wire_msg = &reader->wire_msg;
+        if (reader->handler == NULL) {
+            reader->handler = ch_bf_acquire(reader->pool);
+            if (reader->handler == NULL) {
+                LC(chirp, "Stop reading", "ch_connection_t:%p", conn);
+                if (!(conn->flags & CH_CN_STOPPED)) {
+                    LC(chirp, "Stop stream", "ch_connection_t:%p", conn);
+                    uv_read_stop((uv_stream_t*) &conn->client);
+                }
+                conn->flags |= CH_CN_STOPPED;
+                *stop = 1;
+                return bytes_handled;
+            }
+        }
+        handler = reader->handler;
+        msg     = &handler->msg;
+        /* Copy the wire message */
+        memcpy(msg, wire_msg, ((char*) &wire_msg->header) - ((char*) wire_msg));
+        msg->ip_protocol = conn->ip_protocol;
+        msg->port        = conn->port;
+        memcpy(msg->remote_identity, conn->remote_identity, CH_ID_SIZE);
+        memcpy(msg->address,
+               conn->address,
+               (msg->ip_protocol == AF_INET6) ? CH_IP_ADDR_SIZE
+                                              : CH_IP4_ADDR_SIZE);
+        /* Direct jump to next read state */
+        if (msg->header_len > 0) {
+            reader->state = CH_RD_HEADER;
+        } else if (msg->data_len > 0) {
+            reader->state = CH_RD_DATA;
+        } else {
+            _ch_rd_handle_msg(conn, reader, msg);
+        }
+        break;
+    }
+    case CH_RD_HEADER: {
+        if (bytes_read == 0)
+            return -1;
+        handler = reader->handler;
+        msg     = &handler->msg;
+        if (_ch_rd_read_buffer(
+                    conn,
+                    reader,
+                    msg,
+                    buf + bytes_handled,
+                    to_read,
+                    &msg->header,
+                    handler->header,
+                    CH_BF_PREALLOC_HEADER,
+                    msg->header_len,
+                    CH_MSG_FREE_HEADER,
+                    &bytes_handled) != CH_SUCCESS) {
+            return -1; /* Shutdown */
+        }
+        /* Direct jump to next read state */
+        if (msg->data_len > 0) {
+            reader->state = CH_RD_DATA;
+        } else {
+            _ch_rd_handle_msg(conn, reader, msg);
+        }
+        break;
+    }
+    case CH_RD_DATA: {
+        if (bytes_read == 0)
+            return -1;
+        handler = reader->handler;
+        msg     = &handler->msg;
+        if (_ch_rd_read_buffer(
+                    conn,
+                    reader,
+                    msg,
+                    buf + bytes_handled,
+                    to_read,
+                    &msg->data,
+                    handler->data,
+                    CH_BF_PREALLOC_DATA,
+                    msg->data_len,
+                    CH_MSG_FREE_DATA,
+                    &bytes_handled) != CH_SUCCESS) {
+            return -1; /* Shutdown */
+        }
+        _ch_rd_handle_msg(conn, reader, msg);
+        break;
+    }
+    default:
+        A(0, "Unknown reader state");
+        break;
+    }
+    return bytes_handled;
+}
+
+// .. c:function::
+static inline ch_error_t
+_ch_rd_verify_msg(ch_connection_t* conn, ch_message_t* msg)
+//    :noindex:
+//
+//    see: :c:func:`_ch_rd_verify_msg`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t*     chirp               = conn->chirp;
+    ch_chirp_int_t* ichirp              = chirp->_;
+    uint32_t        total_wire_msg_size = msg->header_len + msg->data_len;
+    if (total_wire_msg_size > ichirp->config.MAX_MSG_SIZE) {
         EC(chirp,
-           "Could not allocate memory for libuv and tls. ",
+           "Message size exceeds hardlimit. ",
            "ch_connection_t:%p",
            (void*) conn);
         return CH_ENOMEM;
     }
-    conn->buffer_rtls_size = size;
-    conn->buffer_uv_uv     = uv_buf_init(conn->buffer_uv, conn->buffer_size);
-    conn->buffer_wtls_uv   = uv_buf_init(conn->buffer_wtls, conn->buffer_size);
-    conn->flags |= CH_CN_INIT_BUFFERS;
-    A((conn->flags & CH_CN_INIT) == CH_CN_INIT,
-      "Connection not fully initialized");
+    if ((msg->type & CH_MSG_ACK) || (msg->type & CH_MSG_NOOP)) {
+        if (msg->header_len != 0 || msg->data_len != 0) {
+            EC(chirp,
+               "A ack/noop may not have header or data set. ",
+               "ch_connection_t:%p",
+               (void*) conn);
+            return CH_PROTOCOL_ERROR;
+        }
+        if (msg->type & CH_MSG_REQ_ACK) {
+            EC(chirp,
+               "A ack/noop may not require an ack. ",
+               "ch_connection_t:%p",
+               (void*) conn);
+            return CH_PROTOCOL_ERROR;
+        }
+    }
     return CH_SUCCESS;
 }
 
 // .. c:function::
-static void
-_ch_cn_closing(ch_connection_t* conn)
+void
+ch_rd_free(ch_reader_t* reader)
 //    :noindex:
 //
-//    see: :c:func:`_ch_cn_closing`
+//    see: :c:func:`ch_rd_free`
 //
 // .. code-block:: cpp
 //
 {
-    ch_chirp_t* chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    LC(chirp, "Shutdown callback called. ", "ch_connection_t:%p", (void*) conn);
-    conn->flags &= ~CH_CN_CONNECTED;
-    uv_handle_t* handle = (uv_handle_t*) &conn->client;
-    if (uv_is_closing(handle)) {
-        EC(chirp,
-           "Connection already closing on closing. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-    } else {
-        uv_read_stop((uv_stream_t*) &conn->client);
-        if (conn->flags & CH_CN_INIT_READER_WRITER) {
-            ch_wr_free(&conn->writer);
-            ch_rd_free(&conn->reader);
-            conn->flags &= ~CH_CN_INIT_READER_WRITER;
-        }
-        if (conn->flags & CH_CN_INIT_CLIENT) {
-            uv_close(handle, ch_cn_close_cb);
-            conn->shutdown_tasks += 1;
-            conn->flags &= ~CH_CN_INIT_CLIENT;
-        }
-        if (conn->flags & CH_CN_INIT_CONNECT_TIMEOUT) {
-            uv_close((uv_handle_t*) &conn->connect_timeout, ch_cn_close_cb);
-            conn->flags &= ~CH_CN_INIT_CONNECT_TIMEOUT;
-            conn->shutdown_tasks += 1;
-        }
-        LC(chirp,
-           "Closing connection after shutdown. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-    }
+    /* Remove the reference to connection, since it is now invalid */
+    reader->pool->conn = NULL;
+    ch_bf_free(reader->pool);
 }
 
 // .. c:function::
-static void
-_ch_cn_partial_write(ch_connection_t* conn)
+ch_error_t
+ch_rd_init(ch_reader_t* reader, ch_connection_t* conn, ch_chirp_int_t* ichirp)
 //    :noindex:
 //
-//    See: :c:func:`_ch_cn_partial_write`
+//    see: :c:func:`ch_rd_init`
 //
 // .. code-block:: cpp
 //
 {
-    size_t      bytes_encrypted = 0;
-    size_t      bytes_read      = 0;
-    ch_chirp_t* chirp           = conn->chirp;
-    ch_chirp_check_m(chirp);
-    A(!(conn->flags & CH_CN_BUF_WTLS_USED), "The wtls buffer is still used");
-    A(!(conn->flags & CH_CN_WRITE_PENDING), "Another uv write is pending");
-#ifdef CH_ENABLE_ASSERTS
-    conn->flags |= CH_CN_WRITE_PENDING;
-    conn->flags |= CH_CN_BUF_WTLS_USED;
-#endif
-    for (;;) {
-        int can_write_more = 1;
-        int pending        = BIO_pending(conn->bio_app);
-        while (pending && can_write_more) {
-            ssize_t read = BIO_read(
-                    conn->bio_app,
-                    conn->buffer_wtls + bytes_read,
-                    conn->buffer_size - bytes_read);
-            A(read > 0, "BIO_read failure unexpected");
-            if (read < 1) {
-                EC(chirp,
-                   "SSL error reading from BIO, shutting down connection. ",
+    reader->state = CH_RD_START;
+    reader->pool  = ch_alloc(sizeof(*reader->pool));
+    if (reader->pool == NULL) {
+        return CH_ENOMEM;
+    }
+    return ch_bf_init(reader->pool, conn, ichirp->config.MAX_HANDLERS);
+}
+
+// .. c:function::
+ssize_t
+ch_rd_read(ch_connection_t* conn, ch_buf* buf, size_t bytes_read, int* stop)
+//    :noindex:
+//
+//    see: :c:func:`ch_rd_read`
+//
+// .. code-block:: cpp
+//
+{
+    *stop = 0;
+
+    /* Bytes handled is used when multiple writes (of the remote) come in a
+     * single read and the reader switches between various states as for
+     * example CH_RD_HANDSHAKE, CH_RD_WAIT or CH_RD_HEADER. */
+    ssize_t bytes_handled = 0;
+    int     cont;
+
+    /* Ignore reads while shutting down */
+    if (conn->flags & CH_CN_SHUTTING_DOWN) {
+        return bytes_read;
+    }
+
+    do {
+        cont          = 0;
+        bytes_handled = _ch_rd_read_step(
+                conn, buf, bytes_read, bytes_handled, stop, &cont);
+        if (*stop || bytes_handled == -1) {
+            return bytes_handled;
+        }
+    } while (bytes_handled < (ssize_t) bytes_read || cont);
+    return bytes_handled;
+}
+
+CH_EXPORT
+void
+ch_chirp_release_message(ch_message_t* msg)
+//    :noindex:
+//
+//    see: :c:func:`ch_chirp_release_message`
+//
+// .. code-block:: cpp
+//
+{
+    ch_buffer_pool_t* pool = msg->_pool;
+    ch_connection_t*  conn = pool->conn;
+    if (!(msg->_flags & CH_MSG_IS_HANDLER)) {
+        fprintf(stderr,
+                "%s:%d Fatal: Release of non handler message. "
+                "ch_buffer_pool_t:%p\n",
+                __FILE__,
+                __LINE__,
+                (void*) pool);
+        return;
+    }
+    /* If the connection does not exist, it is already shutdown. The user may
+     * release a message after a connection has been shutdown. We use reference
+     * counting in the buffer pool to delay ch_free of the pool. */
+    if (conn && !(conn->flags & CH_CN_SHUTTING_DOWN)) {
+        ch_reader_t* reader = &conn->reader;
+        ch_chirp_t*  chirp  = conn->chirp;
+        if (msg->type & CH_MSG_REQ_ACK) {
+            /* Send the ack to the connection, in case the user changed the
+             * message for his need, which is absolutely ok, and valid use
+             * case. */
+            ch_message_t* ack_msg = &reader->ack_msg;
+            memset(ack_msg, 0, sizeof(*ack_msg));
+            memcpy(ack_msg->identity, msg->identity, CH_ID_SIZE);
+            memcpy(ack_msg->address, conn->address, CH_IP_ADDR_SIZE);
+            ack_msg->ip_protocol = conn->ip_protocol;
+            ack_msg->port        = conn->port;
+            ack_msg->type        = CH_MSG_ACK;
+            ack_msg->header_len  = 0;
+            ack_msg->data_len    = 0;
+            ch_wr_send(chirp, ack_msg, NULL);
+        }
+    }
+    if (msg->_flags & CH_MSG_FREE_DATA) {
+        ch_free(msg->data);
+    }
+    if (msg->_flags & CH_MSG_FREE_HEADER) {
+        ch_free(msg->header);
+    }
+    int pool_is_empty = ch_bf_is_exhausted(pool);
+    ch_bf_release(pool, msg->_handler);
+    /* Decrement refcnt and free if zero */
+    ch_bf_free(pool);
+    if (pool_is_empty && conn) {
+        ch_pr_restart_stream(conn);
+    }
+}
+
+static ssize_t
+_ch_rd_read_buffer(
+        ch_connection_t* conn,
+        ch_reader_t*     reader,
+        ch_message_t*    msg,
+        ch_buf*          src_buf,
+        size_t           to_read,
+        char**           assign_buf,
+        ch_buf*          dest_buf,
+        size_t           dest_buf_size,
+        uint32_t         expected,
+        int              free_flag,
+        ssize_t*         bytes_handled)
+//    :noindex:
+//
+//    see: :c:func:`_ch_rd_read_buffer`
+//
+// .. code-block:: cpp
+//
+{
+    if (reader->bytes_read == 0) {
+        if (expected <= dest_buf_size) {
+            /* Preallocated buf is large enough */
+            *assign_buf = dest_buf;
+        } else {
+            *assign_buf = ch_alloc(expected);
+            if (*assign_buf == NULL) {
+                EC(conn->chirp,
+                   "Could not allocate memory for message. ",
                    "ch_connection_t:%p",
                    (void*) conn);
-                ch_cn_shutdown(conn, CH_TLS_ERROR);
-                return;
+                ch_cn_shutdown(conn, CH_ENOMEM);
+                return CH_ENOMEM;
             }
-            bytes_read += read;
-            int is_write_size_valid =
-                    (bytes_encrypted + conn->write_written) < conn->write_size;
-            int is_buffer_size_valid = bytes_read < conn->buffer_size;
-
-            can_write_more = is_write_size_valid && is_buffer_size_valid;
-            pending        = BIO_pending(conn->bio_app);
-        }
-        if (!can_write_more) {
-            break;
-        }
-        int tmp_err = SSL_write(
-                conn->ssl,
-                conn->write_buffer + bytes_encrypted + conn->write_written,
-                conn->write_size - bytes_encrypted - conn->write_written);
-        bytes_encrypted += tmp_err;
-        A(tmp_err > -1, "SSL_write failure unexpected");
-        if (tmp_err < 0) {
-            EC(chirp,
-               "SSL error writing to BIO, shutting down connection. ",
-               "ch_connection_t:%p",
-               (void*) conn);
-            ch_cn_shutdown(conn, CH_TLS_ERROR);
-            return;
+            msg->_flags |= free_flag;
         }
     }
-    conn->buffer_wtls_uv.len = bytes_read;
-    uv_write(
-            &conn->write_req,
-            (uv_stream_t*) &conn->client,
-            &conn->buffer_wtls_uv,
-            1,
-            _ch_cn_write_cb);
-    LC(chirp,
-       "Called uv_write with %d bytes. ",
-       "ch_connection_t:%p",
-       (int) bytes_read,
-       (void*) conn);
-    conn->write_written += bytes_encrypted;
-}
-
-// .. c:function::
-static void
-_ch_cn_send_pending_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_cn_send_pending_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-#ifdef CH_ENABLE_ASSERTS
-    conn->flags &= ~CH_CN_WRITE_PENDING;
-    conn->flags &= ~CH_CN_BUF_WTLS_USED;
-#endif
-    if (status < 0) {
-        LC(chirp,
-           "Sending pending data failed. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-        ch_cn_shutdown(conn, CH_WRITE_ERROR);
-        return;
-    }
-    if (conn->flags & CH_CN_SHUTTING_DOWN) {
-        LC(chirp,
-           "Write shutdown bytes to connection successful. ",
-           "ch_connection_t:%p",
-           (void*) conn);
+    if ((to_read + reader->bytes_read) >= expected) {
+        /* We can read everything */
+        size_t reading = expected - reader->bytes_read;
+        memcpy(*assign_buf + reader->bytes_read, src_buf, reading);
+        *bytes_handled += reading;
+        reader->bytes_read = 0; /* Reset partial buffer reads */
+        return CH_SUCCESS;
     } else {
-        LC(chirp,
-           "Write handshake bytes to connection successful. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-    }
-    ch_cn_send_if_pending(conn);
-}
-
-// .. c:function::
-static void
-_ch_cn_write_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_cn_write_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-#ifdef CH_ENABLE_ASSERTS
-    conn->flags &= ~CH_CN_WRITE_PENDING;
-    conn->flags &= ~CH_CN_BUF_WTLS_USED;
-#endif
-    if (status < 0) {
-        LC(chirp,
-           "Sending pending data failed. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-        uv_write_cb cb       = conn->write_callback;
-        conn->write_callback = NULL;
-        cb(req, CH_WRITE_ERROR);
-        ch_cn_shutdown(conn, CH_WRITE_ERROR);
-        return;
-    }
-    /* Check if we can write data */
-    int pending = BIO_pending(conn->bio_app);
-    if (conn->write_size > conn->write_written || pending) {
-        _ch_cn_partial_write(conn);
-        LC(chirp,
-           "Partially encrypted %d of %d bytes. ",
-           "ch_connection_t:%p",
-           (int) conn->write_written,
-           (int) conn->write_size,
-           (void*) conn);
-    } else {
-        A(pending == 0, "Unexpected pending data on TLS write");
-        LC(chirp,
-           "Completely sent %d bytes (unenc). ",
-           "ch_connection_t:%p",
-           (int) conn->write_written,
-           (void*) conn);
-        conn->write_written = 0;
-        conn->write_size    = 0;
-        if (conn->write_callback != NULL) {
-            uv_write_cb cb       = conn->write_callback;
-            conn->write_callback = NULL;
-            cb(req, status);
-        }
-    }
-}
-
-// .. c:function::
-void
-ch_cn_close_cb(uv_handle_t* handle)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_close_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = handle->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_chirp_int_t* ichirp = chirp->_;
-    conn->shutdown_tasks -= 1;
-    A(conn->shutdown_tasks > -1, "Shutdown semaphore dropped below zero");
-    LC(chirp,
-       "Shutdown semaphore (%d). ",
-       "ch_connection_t:%p",
-       conn->shutdown_tasks,
-       (void*) conn);
-    /* In production we allow the semaphore to drop below 0, but we log an
-     * error. */
-    if (conn->shutdown_tasks < 0) {
-        E(chirp,
-          "Shutdown semaphore dropped blow 0. ch_connection_t: %p",
-          conn);
-    }
-    if (conn->shutdown_tasks < 1) {
-        if (conn->flags & CH_CN_DO_CLOSE_ACCOUTING) {
-            ichirp->closing_tasks -= 1;
-            LC(chirp,
-               "Closing semaphore (%d). ",
-               "uv_handle_t:%p",
-               ichirp->closing_tasks,
-               (void*) handle);
-        }
-        if (conn->flags & CH_CN_INIT_BUFFERS) {
-            A(conn->buffer_uv, "Initialized buffers inconsistent");
-            ch_free(conn->buffer_uv);
-            if (conn->flags & CH_CN_ENCRYPTED) {
-                A(conn->buffer_wtls, "Initialized buffers inconsistent");
-                A(conn->buffer_rtls, "Initialized buffers inconsistent");
-                ch_free(conn->buffer_wtls);
-                ch_free(conn->buffer_rtls);
-            }
-            conn->flags &= ~CH_CN_INIT_BUFFERS;
-        }
-        if (conn->flags & CH_CN_ENCRYPTED) {
-            /* The doc says this frees conn->bio_ssl I tested it. let's
-             * hope they never change that. */
-            if (conn->flags & CH_CN_INIT_ENCRYPTION) {
-                A(conn->ssl, "Initialized ssl handles inconsistent");
-                A(conn->bio_app, "Initialized ssl handles inconsistent");
-                SSL_free(conn->ssl);
-                BIO_free(conn->bio_app);
-            }
-        }
-        /* Since we define a unencrypted connection as CH_CN_INIT_ENCRYPTION. */
-        conn->flags &= ~CH_CN_INIT_ENCRYPTION;
-        A(!(conn->flags & CH_CN_INIT),
-          "Connection resources haven't been freed completely");
-        A(!(conn->flags & CH_CN_CONNECTED),
-          "Connection not properly disconnected");
-        ch_free(conn);
-        LC(chirp,
-           "Closed connection, closing semaphore (%d). ",
-           "ch_connection_t:%p",
-           chirp->_->closing_tasks,
-           (void*) conn);
-    }
-}
-
-// .. c:function::
-ch_error_t
-ch_cn_init(ch_chirp_t* chirp, ch_connection_t* conn, uint8_t flags)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_init`
-//
-// .. code-block:: cpp
-//
-{
-    int tmp_err;
-
-    ch_chirp_int_t* ichirp = chirp->_;
-    conn->chirp            = chirp;
-    conn->write_req.data   = conn;
-    conn->flags |= flags;
-    tmp_err = ch_rd_init(&conn->reader, conn, ichirp);
-    if (tmp_err != CH_SUCCESS) {
-        return tmp_err;
-    }
-    tmp_err = ch_wr_init(&conn->writer, conn);
-    if (tmp_err != CH_SUCCESS) {
-        return tmp_err;
-    }
-    conn->flags |= CH_CN_INIT_READER_WRITER;
-    if (conn->flags & CH_CN_ENCRYPTED) {
-        tmp_err = ch_cn_init_enc(chirp, conn);
-    }
-    if (tmp_err != CH_SUCCESS) {
-        return tmp_err;
-    }
-    /* An unencrypted connection also has CH_CN_INIT_ENCRYPTION */
-    conn->flags |= CH_CN_INIT_ENCRYPTION;
-    return _ch_cn_allocate_buffers(conn);
-}
-
-// .. c:function::
-ch_error_t
-ch_cn_init_enc(ch_chirp_t* chirp, ch_connection_t* conn)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_init_enc`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_int_t* ichirp = chirp->_;
-    conn->ssl              = SSL_new(ichirp->encryption.ssl_ctx);
-    if (conn->ssl == NULL) {
-#ifdef CH_ENABLE_LOGGING
-        ERR_print_errors_fp(stderr);
-#endif
-        EC(chirp, "Could not create SSL. ", "ch_connection_t:%p", (void*) conn);
-        return CH_TLS_ERROR;
-    }
-    if (BIO_new_bio_pair(&(conn->bio_ssl), 0, &(conn->bio_app), 0) != 1) {
-#ifdef CH_ENABLE_LOGGING
-        ERR_print_errors_fp(stderr);
-#endif
-        EC(chirp,
-           "Could not create BIO pair. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-        SSL_free(conn->ssl);
-        return CH_TLS_ERROR;
-    }
-    SSL_set_bio(conn->ssl, conn->bio_ssl, conn->bio_ssl);
-#ifdef CH_CN_PRINT_CIPHERS
-    STACK_OF(SSL_CIPHER)* ciphers = SSL_get_ciphers(conn->ssl);
-    while (sk_SSL_CIPHER_num(ciphers) > 0)
-        fprintf(stderr,
-                "%s\n",
-                SSL_CIPHER_get_name(sk_SSL_CIPHER_pop(ciphers)));
-    sk_SSL_CIPHER_free(ciphers);
-
-#endif
-    LC(chirp, "SSL context created. ", "ch_connection_t:%p", (void*) conn);
-    return CH_SUCCESS;
-}
-
-// .. c:function::
-void
-ch_cn_read_alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_read_alloc_cb`
-//
-// .. code-block:: cpp
-//
-{
-    /* That whole suggested size concept doesn't work, we have to allocated
-     * consistent buffers. */
-    (void) (suggested_size);
-    ch_connection_t* conn  = handle->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    A(!(conn->flags & CH_CN_BUF_UV_USED), "UV buffer still used");
-#ifdef CH_ENABLE_ASSERTS
-    conn->flags |= CH_CN_BUF_UV_USED;
-#endif
-    buf->base = conn->buffer_uv;
-    buf->len  = conn->buffer_size;
-}
-
-// .. c:function::
-void
-ch_cn_send_if_pending(ch_connection_t* conn)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_send_if_pending`
-//
-// .. code-block:: cpp
-//
-{
-    A(!(conn->flags & CH_CN_WRITE_PENDING), "Another write is still pending");
-    ch_chirp_t* chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    int pending = BIO_pending(conn->bio_app);
-    if (pending < 1) {
-        if (!(conn->flags & CH_CN_TLS_HANDSHAKE ||
-              conn->flags & CH_CN_SHUTTING_DOWN)) {
-            int stop;
-            ch_rd_read(conn, NULL, 0, &stop); /* Start the reader */
-        }
-        return;
-    }
-    A(!(conn->flags & CH_CN_BUF_WTLS_USED), "The wtls buffer is still used");
-#ifdef CH_ENABLE_ASSERTS
-    conn->flags |= CH_CN_BUF_WTLS_USED;
-    conn->flags |= CH_CN_WRITE_PENDING;
-#endif
-    ssize_t read =
-            BIO_read(conn->bio_app, conn->buffer_wtls, conn->buffer_size);
-    conn->buffer_wtls_uv.len = read;
-    uv_write(
-            &conn->write_req,
-            (uv_stream_t*) &conn->client,
-            &conn->buffer_wtls_uv,
-            1,
-            _ch_cn_send_pending_cb);
-    if (conn->flags & CH_CN_SHUTTING_DOWN) {
-        LC(chirp,
-           "Sending %d pending shutdown bytes. ",
-           "ch_connection_t:%p",
-           read,
-           (void*) conn);
-    } else {
-        LC(chirp,
-           "Sending %d pending handshake bytes. ",
-           "ch_connection_t:%p",
-           read,
-           (void*) conn);
-    }
-}
-
-// .. c:function::
-ch_error_t
-ch_cn_shutdown(ch_connection_t* conn, int reason)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_shutdown`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t* chirp = conn->chirp;
-    if (conn->flags & CH_CN_SHUTTING_DOWN) {
-        EC(chirp, "Shutdown in progress. ", "ch_connection_t:%p", (void*) conn);
-        return CH_IN_PRORESS;
-    }
-    LC(chirp, "Shutdown connection. ", "ch_connection_t:%p", (void*) conn);
-    conn->flags |= CH_CN_SHUTTING_DOWN;
-    ch_pr_debounce_connection(conn);
-    ch_chirp_int_t*  ichirp = chirp->_;
-    ch_writer_t*     writer = &conn->writer;
-    ch_remote_t*     remote = conn->remote;
-    ch_connection_t* out;
-    /* In case this conn is in handshake_conns remove it, since we aborted the
-     * handshake */
-    ch_cn_delete(&ichirp->protocol.handshake_conns, conn, &out);
-    /* In case this conn is in old_connections remove it, since we now cleaned
-     * it up*/
-    ch_cn_delete(&ichirp->protocol.old_connections, conn, &out);
-    if (conn->flags & CH_CN_INIT_CLIENT) {
-        uv_read_stop((uv_stream_t*) &conn->client);
-    }
-    conn->remote      = NULL; /* Disassociate from remote */
-    ch_message_t* msg = writer->msg;
-    ch_message_t* wam = NULL;
-    /* In early handshake remote can empty, since we allocate resources after
-     * successful handshake. */
-    if (remote) {
-        /* We finish the message and therefore set wam to NULL. */
-        wam                      = remote->wait_ack_message;
-        remote->wait_ack_message = NULL;
-        /* We could be a connection from old_connections and therefore we do
-         * not want to invalidate an active connection. */
-        if (remote->conn == conn) {
-            remote->conn = NULL;
-        }
-        /* Abort all ack messsages */
-        remote->cntl_msg_queue = NULL;
-    }
-    if (wam != NULL) {
-        wam->_flags |= CH_MSG_FAILURE;
-        ch_chirp_finish_message(chirp, conn, wam, reason);
-    }
-    if (msg != NULL && msg != wam) {
-        msg->_flags |= CH_MSG_FAILURE;
-        ch_chirp_finish_message(chirp, conn, msg, reason);
-    }
-    if (wam == NULL && msg == NULL && remote != NULL) {
-        /* If we have not finished a message we abort one on the remote. */
-        _ch_cn_abort_one_message(remote, reason);
-    }
-    /* finish vs abort - finish: cancel a message on the current connection.
-     * abort: means canceling a message that hasn't been queued yet. If
-     * possible we don't want to cancel a message that hasn't been queued
-     * yet.*/
-    if (conn->flags & CH_CN_ENCRYPTED && conn->flags & CH_CN_INIT_ENCRYPTION) {
-        int tmp_err = SSL_get_verify_result(conn->ssl);
-        if (tmp_err != X509_V_OK) {
-            EC(chirp,
-               "Connection has cert verification error: %d. ",
-               "ch_connection_t:%p",
-               tmp_err,
-               (void*) conn);
-        }
-    }
-    if (ichirp->flags & CH_CHIRP_CLOSING) {
-        conn->flags |= CH_CN_DO_CLOSE_ACCOUTING;
-        ichirp->closing_tasks += 1;
-    }
-    _ch_cn_closing(conn);
-    return CH_SUCCESS;
-}
-
-// .. c:function::
-void
-ch_cn_write(ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback)
-//    :noindex:
-//
-//    see: :c:func:`ch_cn_write`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t* chirp = conn->chirp;
-    A(conn->write_size == 0, "Another connection write is pending");
-    if (conn->flags & CH_CN_ENCRYPTED) {
-        conn->write_callback = callback;
-        conn->write_buffer   = buf;
-        conn->write_size     = size;
-        conn->write_written  = 0;
-#ifdef CH_ENABLE_ASSERTS
-        int pending = BIO_pending(conn->bio_app);
-        A(pending == 0, "There is still pending data in SSL BIO");
-#endif
-        _ch_cn_partial_write(conn);
-    } else {
-        conn->buffer_any_uv = uv_buf_init(buf, size);
-        uv_write(
-                &conn->write_req,
-                (uv_stream_t*) &conn->client,
-                &conn->buffer_any_uv,
-                1,
-                callback);
-        LC(chirp,
-           "Called uv_write with %d bytes. ",
-           "ch_connection_t:%p",
-           (int) size,
-           (void*) conn);
+        /* Only partial read possible */
+        memcpy(*assign_buf + reader->bytes_read, src_buf, to_read);
+        *bytes_handled += to_read;
+        reader->bytes_read += to_read;
+        return CH_MORE;
     }
 }
 // ======
@@ -6727,7 +7130,6 @@ ch_bf_acquire(ch_buffer_pool_t* pool)
     if (pool->used_buffers < pool->max_buffers) {
         int free;
         pool->used_buffers += 1;
-        pool->refcnt += 1;
         free = ch_msb32(pool->free_buffers);
         /* Reserve the buffer. */
         pool->free_buffers &= ~(1 << (free - 1));
@@ -6774,7 +7176,6 @@ ch_bf_release(ch_buffer_pool_t* pool, int id)
     /* Release the buffer. */
     handler_buf->used = 0;
     pool->free_buffers |= (1 << (31 - id));
-    ch_bf_free(pool);
 }
 // ========
 // Protocol
@@ -6986,18 +7387,18 @@ _ch_pr_gc_connections_cb(uv_timer_t* handle)
 {
     ch_chirp_t* chirp = handle->data;
     ch_chirp_check_m(chirp);
-    ch_chirp_int_t*  ichirp   = chirp->_;
-    ch_protocol_t*   protocol = &ichirp->protocol;
-    ch_config_t*     config   = &ichirp->config;
-    uint64_t         now      = uv_hrtime();
-    uint64_t         then     = now - (1000 * 1000 * 1000 * config->REUSE_TIME);
+    ch_chirp_int_t*  ichirp       = chirp->_;
+    ch_protocol_t*   protocol     = &ichirp->protocol;
+    ch_config_t*     config       = &ichirp->config;
+    uint64_t         now          = uv_now(ichirp->loop);
+    uint64_t         delta        = (1000 * config->REUSE_TIME);
     ch_remote_t*     rm_del_stack = NULL;
     ch_connection_t* cn_del_stack = NULL;
 
     L(chirp, "Garbage-collecting connections and remotes", CH_NO_ARG);
     rb_iter_decl_cx_m(ch_cn, cn_iter, cn_elem);
     rb_for_m (ch_cn, protocol->old_connections, cn_iter, cn_elem) {
-        if (cn_elem->timestamp < then) {
+        if (now - cn_elem->timestamp > delta) {
             ch_cn_st_push(&cn_del_stack, cn_elem);
         }
     }
@@ -7012,7 +7413,7 @@ _ch_pr_gc_connections_cb(uv_timer_t* handle)
     rb_iter_decl_cx_m(ch_rm, rm_iter, rm_elem);
     rb_for_m (ch_rm, protocol->remotes, rm_iter, rm_elem) {
         if (!(rm_elem->flags & CH_RM_CONN_BLOCKED) &&
-            rm_elem->timestamp < then) {
+            now - rm_elem->timestamp > delta) {
             A(rm_elem->next == NULL, "Should not be in reconnect_remotes");
             ch_rm_st_push(&rm_del_stack, rm_elem);
         }
@@ -7673,972 +8074,498 @@ ch_pr_stop(ch_protocol_t* protocol)
     chirp->_->closing_tasks += 4;
     return CH_SUCCESS;
 }
-// ======
-// Remote
-// ======
+// ====
+// Util
+// ====
+//
+// Common utility functions.
 //
 
 // Project includes
 // ================
 //
 // .. code-block:: cpp
-//
-/* #include "remote.h" */
-/* #include "chirp.h" */
+
 /* #include "util.h" */
-
-// rbtree prototypes
-// =================
-//
-// .. c:function::
-static int
-ch_remote_cmp(ch_remote_t* x, ch_remote_t* y)
-//
-//    Compare operator for connections.
-//
-//    :param ch_remote_t* x: First remote instance to compare
-//    :param ch_remote_t* y: Second remote instance to compare
-//
-//    :return: the comparision between
-//                 - the IP protocols, if they are not the same, or
-//                 - the addresses, if they are not the same, or
-//                 - the ports
-//    :rtype: int
-//
-// .. code-block:: cpp
-//
-{
-    if (x->ip_protocol != y->ip_protocol) {
-        return x->ip_protocol - y->ip_protocol;
-    } else {
-        int tmp_cmp =
-                memcmp(x->address,
-                       y->address,
-                       x->ip_protocol == AF_INET6 ? CH_IP_ADDR_SIZE
-                                                  : CH_IP4_ADDR_SIZE);
-        if (tmp_cmp != 0) {
-            return tmp_cmp;
-        } else {
-            return x->port - y->port;
-        }
-    }
-}
-
-rb_bind_impl_m(ch_rm, ch_remote_t) CH_ALLOW_NL;
-
-// stack prototypes
-// ================
-//
-// .. code-block:: cpp
-
-qs_stack_bind_impl_m(ch_rm_st, ch_remote_t) CH_ALLOW_NL;
-
-// Definitions
-// ===========
-//
-// .. code-block:: cpp
-
-static void
-_ch_rm_init(ch_chirp_t* chirp, ch_remote_t* remote, int key)
-//
-//    Initialize remote
-//
-// .. code-block:: cpp
-//
-{
-    memset(remote, 0, sizeof(*remote));
-    ch_rm_node_init(remote);
-    remote->chirp = chirp;
-    if (!key) {
-        ch_random_ints_as_bytes(
-                (uint8_t*) &remote->serial, sizeof(remote->serial));
-        remote->timestamp = uv_hrtime();
-    }
-}
-
-// .. c:function::
-void
-ch_rm_init_from_msg(
-        ch_chirp_t* chirp, ch_remote_t* remote, ch_message_t* msg, int key)
-//    :noindex:
-//
-//    see: :c:func:`ch_rm_init_from_msg`
-//
-// .. code-block:: cpp
-//
-{
-    _ch_rm_init(chirp, remote, key);
-    remote->ip_protocol = msg->ip_protocol;
-    remote->port        = msg->port;
-    memcpy(&remote->address, &msg->address, CH_IP_ADDR_SIZE);
-    remote->conn = NULL;
-}
-
-// .. c:function::
-void
-ch_rm_init_from_conn(
-        ch_chirp_t* chirp, ch_remote_t* remote, ch_connection_t* conn, int key)
-//    :noindex:
-//
-//    see: :c:func:`ch_rm_init_from_conn`
-//
-// .. code-block:: cpp
-//
-{
-    _ch_rm_init(chirp, remote, key);
-    remote->ip_protocol = conn->ip_protocol;
-    remote->port        = conn->port;
-    memcpy(&remote->address, &conn->address, CH_IP_ADDR_SIZE);
-    remote->conn = NULL;
-}
-
-// .. c:function::
-void
-ch_rm_free(ch_remote_t* remote)
-//    :noindex:
-//
-//    see: :c:func:`ch_rm_free`
-//
-// .. code-block:: cpp
-//
-{
-    if (remote->noop != NULL) {
-        ch_free(remote->noop);
-    }
-    ch_free(remote);
-}
-// ==========
-// Serializer
-// ==========
-//
-
-// Project includes
-// ================
-//
-// .. code-block:: cpp
-//
-/* #include "serializer.h" */
-
-// Definitions
-// ===========
-//
-// .. code-block:: cpp
-
-// .. c:function::
-int
-ch_sr_buf_to_msg(ch_buf* buf, ch_message_t* msg)
-//    :noindex:
-//
-//    see: :c:func:`ch_sr_buf_to_msg`
-//
-// .. code-block:: cpp
-//
-{
-    CH_SR_WIRE_MESSAGE_LAYOUT;
-
-    memcpy(msg->identity, identity, CH_ID_SIZE);
-
-    msg->type       = *type;
-    msg->header_len = ntohs(*header_len);
-    msg->data_len   = ntohl(*data_len);
-    msg->serial     = ntohl(*serial);
-    return CH_SR_WIRE_MESSAGE_SIZE;
-}
-
-// .. c:function::
-int
-ch_sr_msg_to_buf(ch_message_t* msg, ch_buf* buf)
-//    :noindex:
-//
-//    see: :c:func:`ch_sr_msg_to_buf`
-//
-// .. code-block:: cpp
-//
-{
-    CH_SR_WIRE_MESSAGE_LAYOUT;
-
-    memcpy(identity, msg->identity, CH_ID_SIZE);
-
-    *type       = msg->type;
-    *header_len = htons(msg->header_len);
-    *data_len   = htonl(msg->data_len);
-    *serial     = htonl(msg->serial);
-    return CH_SR_WIRE_MESSAGE_SIZE;
-}
-
-// .. c:function::
-int
-ch_sr_buf_to_hs(ch_buf* buf, ch_sr_handshake_t* hs)
-//    :noindex:
-//
-//    see: :c:func:`ch_sr_buf_to_hs`
-//
-// .. code-block:: cpp
-//
-{
-    CH_SR_HANDSHAKE_LAYOUT;
-
-    hs->port = ntohs(*port);
-    memcpy(hs->identity, identity, CH_ID_SIZE);
-
-    return CH_SR_HANDSHAKE_SIZE;
-}
-
-// .. c:function::
-int
-ch_sr_hs_to_buf(ch_sr_handshake_t* hs, ch_buf* buf)
-//    :noindex:
-//
-//    see: :c:func:`ch_sr_hs_to_buf`
-//
-// .. code-block:: cpp
-//
-
-{
-    CH_SR_HANDSHAKE_LAYOUT;
-
-    *port = htons(hs->port);
-    memcpy(identity, hs->identity, CH_ID_SIZE);
-
-    return CH_SR_HANDSHAKE_SIZE;
-}
-// ======
-// Writer
-// ======
-//
-
-// Project includes
-// ================
-//
-// .. code-block:: cpp
-//
-/* #include "writer.h" */
 /* #include "chirp.h" */
-/* #include "protocol.h" */
-/* #include "remote.h" */
-/* #include "util.h" */
+/* #include "rbtree.h" */
+
+// System includes
+// ===============
+//
+// .. code-block:: cpp
+
+#include <stdarg.h>
 
 // Declarations
 // ============
-
-// .. c:function::
-static int
-_ch_wr_check_write_error(
-        ch_chirp_t*      chirp,
-        ch_writer_t*     writer,
-        ch_connection_t* conn,
-        int              status);
 //
-//    Check if the given status is erroneous (that is, there was an error
-//    during writing) and cleanup if necessary. Cleaning up means shutting down
-//    the given connection instance, stopping the timer for the send-timeout.
-//
-//    :param ch_chirp_t* chirp:      Pointer to a chirp instance.
-//    :param ch_writer_t* writer:    Pointer to a writer instance.
-//    :param ch_connection_t* conn:  Pointer to a connection instance.
-//    :param int status:             Status of the write, of type
-//                                   :c:type:`ch_error_t`.
-//
-//    :return:                       the status, which is of type
-//                                   :c:type:`ch_error_t`.
-//    :rtype:                        int
+// .. code-block:: cpp
 //
 
+static int             _ch_always_encrypt = 0;
+static ch_free_cb_t    _ch_free_cb        = free;
+static ch_alloc_cb_t   _ch_alloc_cb       = malloc;
+static ch_realloc_cb_t _ch_realloc_cb     = realloc;
+
+// Logging and assert macros
+// =========================
+//
+// Colors
+// ------
+//
+// .. code-block:: cpp
+
+static char* const _ch_lg_reset     = "\x1B[0m";
+static char* const _ch_lg_err       = "\x1B[1;31m";
+static char* const _ch_lg_colors[8] = {
+        "\x1B[0;34m",
+        "\x1B[0;32m",
+        "\x1B[0;36m",
+        "\x1B[0;33m",
+        "\x1B[1;34m",
+        "\x1B[1;32m",
+        "\x1B[1;36m",
+        "\x1B[1;33m",
+};
+
+#ifdef CH_ENABLE_ASSERTS
+
+// Debug alloc tracking
+// ====================
+//
+// Since we can't use valgrind and rr at the same time and I needed to debug a
+// leak with rr, I added this memory leak debugging code. Since we use rr, the
+// pointer to the allocation is enough, we don't need any meta information.
+
+// .. c:var:: uv_mutex_t _ch_at_lock
+//
+//    Lock for alloc tracking
+//
+// .. code-block:: cpp
+//
+static uv_mutex_t _ch_at_lock;
+
+struct ch_alloc_track_s;
+typedef struct ch_alloc_track_s ch_alloc_track_t;
+struct ch_alloc_track_s {
+    void*             buf;
+    char              color;
+    ch_alloc_track_t* parent;
+    ch_alloc_track_t* left;
+    ch_alloc_track_t* right;
+};
+
+#define _ch_at_cmp_m(x, y) rb_safe_cmp_m(x->buf, y->buf)
+
+rb_bind_m(_ch_at, ch_alloc_track_t) CH_ALLOW_NL;
+
+ch_alloc_track_t* _ch_alloc_tree;
+
 // .. c:function::
-static ch_error_t
-_ch_wr_connect(ch_remote_t* remote);
+int
+ch_at_allocated(void* buf)
+//    :noindex:
 //
-//    Connects to a remote peer.
+//    see: :c:func:`ch_at_allocated`
 //
-//    :param ch_remote_t* remote: Remote to connect to.
+// .. code-block:: cpp
+//
+{
+    ch_alloc_track_t  key;
+    ch_alloc_track_t* value;
+    key.buf = buf;
+    uv_mutex_lock(&_ch_at_lock);
+    int ret = _ch_at_find(_ch_alloc_tree, &key, &value) == CH_SUCCESS;
+    uv_mutex_unlock(&_ch_at_lock);
+    return ret;
+}
+
+// .. c:function::
+static void*
+_ch_at_alloc(void* buf)
+//
+//    Track a memory allocation.
+//
+//    :param void* buf: Pointer to the buffer to track.
+//
+// .. code-block:: cpp
+//
+{
+    /* We do not track failed allocations */
+    if (buf == NULL) {
+        return buf;
+    }
+    ch_alloc_track_t* track = _ch_alloc_cb(sizeof(*track));
+    assert(track);
+    /* We treat a failure to track as an alloc failure. This code is here
+     * if we ever need to use this in release mode (or just for
+     * correctness). */
+    if (track == NULL) {
+        return NULL;
+    }
+    _ch_at_node_init(track);
+    track->buf = buf;
+    uv_mutex_lock(&_ch_at_lock);
+    int ret = _ch_at_insert(&_ch_alloc_tree, track);
+    uv_mutex_unlock(&_ch_at_lock);
+    assert(ret == 0);
+    return buf;
+}
+
+// .. c:function::
+void
+ch_at_cleanup(void)
+//    :noindex:
+//
+//    see: :c:func:`ch_at_cleanup`
+//
+// .. code-block:: cpp
+//
+{
+    if (_ch_alloc_tree != _ch_at_nil_ptr) {
+        fprintf(stderr, "Leaked allocations: \n");
+        while (_ch_alloc_tree != _ch_at_nil_ptr) {
+            ch_alloc_track_t* item;
+            item = _ch_alloc_tree;
+            fprintf(stderr, "%p ", item->buf);
+            _ch_at_delete_node(&_ch_alloc_tree, item);
+            _ch_free_cb(item);
+        }
+        fprintf(stderr, "\n");
+        A(0, "There is a memory leak")
+    }
+    uv_mutex_destroy(&_ch_at_lock);
+}
+
+// .. c:function::
+void
+ch_at_init(void)
+//    :noindex:
+//
+//    see: :c:func:`ch_at_init`
+//
+// .. code-block:: cpp
+//
+{
+    uv_mutex_init(&_ch_at_lock);
+    _ch_at_tree_init(&_ch_alloc_tree);
+}
 
 // .. c:function::
 static void
-_ch_wr_connect_cb(uv_connect_t* req, int status);
+_ch_at_free(void* buf)
 //
-//    Called by libuv after trying to connect. Contains the connection status.
+//    Track a freed memory allocation.
 //
-//    :param uv_connect_t* req: Connect request, containing the connection.
-//    :param int status:        Status of the connection.
+//    :param void* buf: Pointer to the buffer to track.
 //
+// .. code-block:: cpp
+//
+{
+    ch_alloc_track_t  key;
+    ch_alloc_track_t* track;
+    key.buf = buf;
+    uv_mutex_lock(&_ch_at_lock);
+    int ret = _ch_at_delete(&_ch_alloc_tree, &key, &track);
+    uv_mutex_unlock(&_ch_at_lock);
+    assert(ret == 0);
+    _ch_free_cb(track);
+}
 
 // .. c:function::
-static void
-_ch_wr_connect_timeout_cb(uv_timer_t* handle);
+static void*
+_ch_at_realloc(void* buf, void* rbuf)
 //
-//    Callback which is called after the connection reaches its timeout for
-//    connecting. The timeout is set by the chirp configuration and is 5 seconds
-//    by default. When this callback is called, the connection is shutdown.
+//    Track a memory reallocation.
 //
-//    :param uv_timer_t* handle: uv timer handle, data contains chirp
-
-// .. c:function::
-static void
-_ch_wr_write_chirp_header_cb(uv_write_t* req, int status);
+//    :param void* buf: Pointer to the buffer that has been reallocated.
+//    :param void* rbuf: Pointer to the new buffer.
 //
-//    Callback which is called after the messages header was written.
+// .. code-block:: cpp
 //
-//    The successful sending of a message over a connection triggers the
-//    message header callback, which, in its turn, then calls this callback ---
-//    if a header is present.
-//
-//    Cancels (void) if the sending was erroneous. Next data will be written if
-//    the message has data.
-//
-//    :param uv_write_t* req:  Write request.
-//    :param int status:       Write status.
-
-// .. c:function::
-static void
-_ch_wr_write_data_cb(uv_write_t* req, int status);
-//
-//    Callback which is called after data was written.
-//
-//    :param uv_write_t* req:  Write request.
-//    :param int status:       Write status.
-
-// .. c:function::
-static void
-_ch_wr_write_finish(
-        ch_chirp_t* chirp, ch_writer_t* writer, ch_connection_t* conn);
-//
-//    Finishes the current write operation, the message store on the writer is
-//    set to NULL and :c:func:`ch_chirp_finish_message` is called.
-//
-//    :param ch_chirp_t* chirp:      Pointer to a chirp instance.
-//    :param ch_writer_t* writer:    Pointer to a writer instance.
-//    :param ch_connection_t* conn:  Pointer to a connection instance.
-
-// .. c:function::
-static void
-_ch_wr_write_msg_header_cb(uv_write_t* req, int status);
-//
-//    Callback which is called after the messages header was written.
-//
-//    :param uv_write_t* req:  Write request.
-//    :param int status:       Write status.
-
-// .. c:function::
-static void
-_ch_wr_write_timeout_cb(uv_timer_t* handle);
-//
-//    Callback which is called after the writer reaches its timeout for
-//    sending. The timeout is set by the chirp configuration and is 5 seconds
-//    by default. When this callback is called, the connection is being shut
-//    down.
-//
-//    :param uv_timer_t* handle: uv timer handle, data contains chirp
-//
-// .. c:function::
-static void
-_ch_wr_enqeue_noop_if_needed(ch_remote_t* remote);
-//
-//    If remote wasn't use for 3/4 REUSE_TIME, we send a noop message
-//
-//    :param ch_remote_t* remote: Remote to send the noop to.
+{
+    /* We do not track failed reallocations */
+    if (rbuf == NULL) {
+        return rbuf;
+    }
+    ch_alloc_track_t  key;
+    ch_alloc_track_t* track;
+    /* Shortcut if the allocator was able to extend the allocation */
+    if (buf == rbuf) {
+        return rbuf;
+    }
+    key.buf = buf;
+    uv_mutex_lock(&_ch_at_lock);
+    int ret = _ch_at_delete(&_ch_alloc_tree, &key, &track);
+    uv_mutex_unlock(&_ch_at_lock);
+    assert(ret == 0);
+    track->buf = rbuf;
+    ret        = _ch_at_insert(&_ch_alloc_tree, track);
+    assert(ret == 0);
+    return rbuf;
+}
+#endif
 
 // Definitions
 // ===========
 
 // .. c:function::
-static int
-_ch_wr_check_write_error(
-        ch_chirp_t*      chirp,
-        ch_writer_t*     writer,
-        ch_connection_t* conn,
-        int              status)
+void*
+ch_alloc(size_t size)
 //    :noindex:
 //
-//    see: :c:func:`_ch_wr_check_write_error`
+//    see: :c:func:`ch_alloc`
 //
 // .. code-block:: cpp
 //
 {
-    A(writer->msg != NULL, "ⱳriter->msg should be set on callback");
-    (void) (writer);
-    if (status != CH_SUCCESS) {
-        LC(chirp,
-           "Write failed with uv status: %d. ",
-           "ch_connection_t:%p",
-           status,
-           (void*) conn);
-        ch_cn_shutdown(conn, CH_PROTOCOL_ERROR);
-        return CH_PROTOCOL_ERROR;
-    }
-    return CH_SUCCESS;
-}
-
-// .. c:function::
-static ch_error_t
-_ch_wr_connect(ch_remote_t* remote)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_connect`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t*      chirp  = remote->chirp;
-    ch_chirp_int_t*  ichirp = chirp->_;
-    ch_connection_t* conn   = ch_alloc(sizeof(*conn));
-    if (!conn) {
-        return CH_ENOMEM;
-    }
-    remote->conn = conn;
-    memset(conn, 0, sizeof(*conn));
-    ch_cn_node_init(conn);
-    conn->chirp        = chirp;
-    conn->port         = remote->port;
-    conn->ip_protocol  = remote->ip_protocol;
-    conn->connect.data = conn;
-    conn->remote       = remote;
-    conn->client.data  = conn;
-    int tmp_err        = uv_timer_init(ichirp->loop, &conn->connect_timeout);
-    if (tmp_err != CH_SUCCESS) {
-        EC(chirp,
-           "Initializing connect timeout failed: %d. ",
-           "ch_connection_t:%p",
-           tmp_err,
-           (void*) conn);
-        return CH_INIT_FAIL;
-    }
-    conn->connect_timeout.data = conn;
-    conn->flags |= CH_CN_INIT_CONNECT_TIMEOUT;
-    tmp_err = uv_timer_start(
-            &conn->connect_timeout,
-            _ch_wr_connect_timeout_cb,
-            ichirp->config.TIMEOUT * 1000,
-            0);
-    if (tmp_err != CH_SUCCESS) {
-        EC(chirp,
-           "Starting connect timeout failed: %d. ",
-           "ch_connection_t:%p",
-           tmp_err,
-           (void*) conn);
-        return CH_FATAL;
-    }
-
-    ch_text_address_t taddr;
-    uv_inet_ntop(
-            remote->ip_protocol,
-            remote->address,
-            taddr.data,
-            sizeof(taddr.data));
-    if (!(ichirp->config.DISABLE_ENCRYPTION || ch_is_local_addr(&taddr))) {
-        conn->flags |= CH_CN_ENCRYPTED;
-    }
-    memcpy(&conn->address, &remote->address, CH_IP_ADDR_SIZE);
-    uv_tcp_init(ichirp->loop, &conn->client);
-    conn->flags |= CH_CN_INIT_CLIENT;
-    struct sockaddr_storage addr;
-    /* No error can happen, the address was taken from a binary format */
-    ch_textaddr_to_sockaddr(remote->ip_protocol, &taddr, remote->port, &addr);
-    tmp_err = uv_tcp_connect(
-            &conn->connect,
-            &conn->client,
-            (struct sockaddr*) &addr,
-            _ch_wr_connect_cb);
-    if (tmp_err != CH_SUCCESS) {
-        E(chirp,
-          "Failed to connect to host: %s:%d (%d)",
-          taddr.data,
-          remote->port,
-          tmp_err);
-        return CH_CANNOT_CONNECT;
-    }
-    LC(chirp,
-       "Connecting to remote %s:%d. ",
-       "ch_connection_t:%p",
-       taddr.data,
-       remote->port,
-       (void*) conn);
-    return CH_SUCCESS;
+    void* buf = _ch_alloc_cb(size);
+    /* Assert memory (do not rely on this, implement it robust: be graceful and
+     * return error to user) */
+    A(buf, "Allocation failure");
+#ifdef CH_ENABLE_ASSERTS
+    return _ch_at_alloc(buf);
+#else
+    return buf;
+#endif
 }
 
 // .. c:function::
 void
-_ch_wr_connect_cb(uv_connect_t* req, int status)
+ch_bytes_to_hex(uint8_t* bytes, size_t bytes_size, char* str, size_t str_size)
 //    :noindex:
 //
-//    see: :c:func:`_ch_wr_connect_cb`
+//    see: :c:func:`ch_bytes_to_hex`
 //
 // .. code-block:: cpp
 //
 {
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_text_address_t taddr;
-    A(chirp == conn->chirp, "Chirp on connection should match");
-    uv_inet_ntop(
-            conn->ip_protocol, conn->address, taddr.data, sizeof(taddr.data));
-    if (status == CH_SUCCESS) {
-        LC(chirp,
-           "Connected to remote %s:%d. ",
-           "ch_connection_t:%p",
-           taddr.data,
-           conn->port,
-           (void*) conn);
-        /* Here we join the code called on accept. */
-        ch_pr_conn_start(chirp, conn, &conn->client, 0);
+    size_t i;
+    A(bytes_size * 2 + 1 <= str_size, "Not enough space for string");
+    (void) (str_size);
+    for (i = 0; i < bytes_size; i++) {
+        snprintf(str, 3, "%02X", bytes[i]);
+        str += 2;
+    }
+    *str = 0;
+}
+
+// .. c:function::
+void
+ch_chirp_set_always_encrypt()
+//    :noindex:
+//
+//    see: :c:func:`ch_chirp_set_always_encrypt`
+//
+// .. code-block:: cpp
+//
+{
+    _ch_always_encrypt = 1;
+}
+
+// .. c:function::
+void
+ch_free(void* buf)
+//    :noindex:
+//
+//    see: :c:func:`ch_free`
+//
+// .. code-block:: cpp
+//
+{
+#ifdef CH_ENABLE_ASSERTS
+    _ch_at_free(buf);
+#endif
+    _ch_free_cb(buf);
+}
+
+// .. c:function::
+int
+ch_is_local_addr(ch_text_address_t* addr)
+//    :noindex:
+//
+//    see: :c:func:`ch_is_local_addr`
+//
+// .. code-block:: cpp
+//
+{
+    if (_ch_always_encrypt) {
+        return 0;
     } else {
-        EC(chirp,
-           "Connection to remote failed %s:%d (%d). ",
-           "ch_connection_t:%p",
-           taddr.data,
-           conn->port,
-           status,
-           (void*) conn);
-        ch_cn_shutdown(conn, CH_CANNOT_CONNECT);
-    }
-}
-
-// .. c:function::
-static void
-_ch_wr_connect_timeout_cb(uv_timer_t* handle)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_connect_timeout_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = handle->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    LC(chirp, "Connect timed out. ", "ch_connection_t:%p", (void*) conn);
-    ch_cn_shutdown(conn, CH_TIMEOUT);
-    uv_timer_stop(&conn->connect_timeout);
-    /* We have waited long enough, we send the next message */
-    ch_remote_t  key;
-    ch_remote_t* remote = NULL;
-    ch_rm_init_from_conn(chirp, &key, conn, 1);
-    if (ch_rm_find(chirp->_->protocol.remotes, &key, &remote) == CH_SUCCESS) {
-        ch_wr_process_queues(remote);
-    }
-}
-
-// .. c:function::
-static void
-_ch_wr_enqeue_noop_if_needed(ch_remote_t* remote)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_enqeue_noop_if_needed`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t*     chirp  = remote->chirp;
-    ch_chirp_int_t* ichirp = chirp->_;
-    ch_config_t*    config = &ichirp->config;
-    uint64_t        now    = uv_hrtime();
-    uint64_t then = now - (1000 * 1000 * 1000 * config->REUSE_TIME / 4 * 3);
-    ch_message_t* noop = remote->noop;
-    if (remote->timestamp < then) {
-        if (noop == NULL) {
-            remote->noop = ch_alloc(sizeof(*remote->noop));
-            if (remote->noop == NULL) {
-                return; /* ENOMEM: Noop are not important, we don't send it. */
-            }
-            noop = remote->noop;
-            memset(noop, 0, sizeof(*noop));
-            memcpy(noop->address, remote->address, CH_IP_ADDR_SIZE);
-            noop->ip_protocol = remote->ip_protocol;
-            noop->port        = remote->port;
-            noop->type        = CH_MSG_NOOP;
-        }
-        /* The noop is not enqueued yet, enqueue it */
-        if (!(noop->_flags & CH_MSG_USED) && noop->_next == NULL) {
-            LC(chirp, "Sending NOOP.", "ch_remote_t:%p", remote);
-            ch_msg_enqueue(&remote->cntl_msg_queue, noop);
-        }
+        return (strncmp("::1", addr->data, sizeof(addr->data)) == 0 ||
+                strncmp("127.0.0.1", addr->data, sizeof(addr->data)) == 0);
     }
 }
 
 // .. c:function::
 void
-_ch_wr_send_ts_cb(uv_async_t* handle)
+ch_random_ints_as_bytes(uint8_t* bytes, size_t len)
 //    :noindex:
 //
-//    see: :c:func:`_ch_wr_send_ts_cb`
+//    see: :c:func:`ch_random_ints_as_bytes`
 //
 // .. code-block:: cpp
 //
 {
-    ch_chirp_t* chirp = handle->data;
-    ch_chirp_check_m(chirp);
-    ch_chirp_int_t* ichirp = chirp->_;
-    uv_mutex_lock(&ichirp->send_ts_queue_lock);
-
-    ch_message_t* cur;
-    ch_msg_dequeue(&ichirp->send_ts_queue, &cur);
-    while (cur != NULL) {
-        ch_chirp_send(chirp, cur, cur->_send_cb);
-        ch_msg_dequeue(&ichirp->send_ts_queue, &cur);
+    size_t i;
+    int    tmp_rand;
+    A(len % 4 == 0, "len must be multiple of four");
+#ifdef _WIN32
+#if RAND_MAX < 16384 || INT_MAX < 16384 // 2**14
+#error Seriously broken compiler or platform
+#else  // RAND_MAX < 16384 || INT_MAX < 16384
+    for (i = 0; i < len; i += 2) {
+        tmp_rand = rand();
+        memcpy(bytes + i, &tmp_rand, 2);
     }
-    uv_mutex_unlock(&ichirp->send_ts_queue_lock);
+#endif // RAND_MAX < 16384 || INT_MAX < 16384
+#else  // _WIN32
+#if RAND_MAX < 1073741824 || INT_MAX < 1073741824 // 2**30
+#ifdef CH_ACCEPT_STRANGE_PLATFORM
+    /* WTF, fallback platform */
+    (void) (tmp_rand);
+    for (i = 0; i < len; i++) {
+        bytes[i] = ((unsigned int) rand()) % 256;
+    }
+#else // ACCEPT_STRANGE_PLATFORM
+/* cppcheck-suppress preprocessorErrorDirective */
+#error Unexpected RAND_MAX / INT_MAX, define CH_ACCEPT_STRANGE_PLATFORM
+#endif // ACCEPT_STRANGE_PLATFORM
+#else  // RAND_MAX < 1073741824 || INT_MAX < 1073741824
+    /* Tested: this is 4 times faster*/
+    for (i = 0; i < len; i += 4) {
+        tmp_rand = rand();
+        memcpy(bytes + i, &tmp_rand, 4);
+    }
+#endif // RAND_MAX < 1073741824 || INT_MAX < 1073741824
+#endif // _WIN32
 }
 
 // .. c:function::
-static void
-_ch_wr_write_chirp_header_cb(uv_write_t* req, int status)
+void*
+ch_realloc(void* buf, size_t size)
 //    :noindex:
 //
-//    see: :c:func:`_ch_wr_write_chirp_header_cb`
+//    see: :c:func:`ch_realloc`
 //
 // .. code-block:: cpp
 //
 {
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_writer_t*  writer = &conn->writer;
-    ch_message_t* msg    = writer->msg;
-    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
-        return;
-    }
-    if (msg->data_len > 0) {
-        ch_cn_write(conn, msg->data, msg->data_len, _ch_wr_write_data_cb);
-    } else {
-        _ch_wr_write_finish(chirp, writer, conn);
-    }
-}
-
-// .. c:function::
-static void
-_ch_wr_write_data_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_write_data_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_writer_t* writer = &conn->writer;
-    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
-        return;
-    }
-    _ch_wr_write_finish(chirp, writer, conn);
-}
-
-// .. c:function::
-static void
-_ch_wr_write_finish(
-        ch_chirp_t* chirp, ch_writer_t* writer, ch_connection_t* conn)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_write_finish`
-//
-// .. code-block:: cpp
-//
-{
-    ch_message_t* msg = writer->msg;
-    A(msg != NULL, "Writer has no message");
-    if (!(msg->type & CH_MSG_REQ_ACK)) {
-        msg->_flags |= CH_MSG_ACK_RECEIVED; /* Emulate ACK */
-    }
-    msg->_flags |= CH_MSG_WRITE_DONE;
-    writer->msg     = NULL;
-    conn->timestamp = uv_hrtime();
-    if (conn->remote != NULL) {
-        conn->remote->timestamp = conn->timestamp;
-    }
-    ch_chirp_finish_message(chirp, conn, msg, CH_SUCCESS);
-}
-
-// .. c:function::
-static void
-_ch_wr_write_msg_header_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_write_msg_header_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_writer_t*  writer = &conn->writer;
-    ch_message_t* msg    = writer->msg;
-    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
-        return;
-    }
-    if (msg->header_len > 0) {
-        ch_cn_write(
-                conn,
-                msg->header,
-                msg->header_len,
-                _ch_wr_write_chirp_header_cb);
-    } else if (msg->data_len > 0) {
-        ch_cn_write(conn, msg->data, msg->data_len, _ch_wr_write_data_cb);
-    } else {
-        _ch_wr_write_finish(chirp, writer, conn);
-    }
-}
-
-// .. c:function::
-static void
-_ch_wr_write_timeout_cb(uv_timer_t* handle)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_write_timeout_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = handle->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    LC(chirp, "Write timed out. ", "ch_connection_t:%p", (void*) conn);
-    ch_cn_shutdown(conn, CH_TIMEOUT);
+    void* rbuf = _ch_realloc_cb(buf, size);
+    /* Assert memory (do not rely on this, implement it robust: be graceful and
+     * return error to user) */
+    A(rbuf, "Reallocation failure");
+#ifdef CH_ENABLE_ASSERTS
+    return _ch_at_realloc(buf, rbuf);
+#else
+    return rbuf;
+#endif
 }
 
 // .. c:function::
 CH_EXPORT
-ch_error_t
-ch_chirp_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
+void
+ch_set_alloc_funcs(
+        ch_alloc_cb_t alloc, ch_realloc_cb_t realloc, ch_free_cb_t free)
 //    :noindex:
 //
-//    see: :c:func:`ch_wr_send`
+//    see: :c:func:`ch_set_alloc_funcs`
 //
 // .. code-block:: cpp
 //
 {
-    ch_chirp_check_m(chirp);
-    if (chirp->_->config.ACKNOWLEDGE != 0) {
-        msg->type = CH_MSG_REQ_ACK;
+    _ch_alloc_cb   = alloc;
+    _ch_realloc_cb = realloc;
+    _ch_free_cb    = free;
+}
+
+// .. c:function::
+ch_error_t
+ch_textaddr_to_sockaddr(
+        int                      af,
+        ch_text_address_t*       text,
+        uint16_t                 port,
+        struct sockaddr_storage* addr)
+//    :noindex:
+//
+//    see: :c:func:`ch_textaddr_to_sockaddr`
+//
+// .. code-block:: cpp
+//
+{
+    if (af == AF_INET6) {
+        return uv_ip6_addr(text->data, port, (struct sockaddr_in6*) addr);
     } else {
-        msg->type = 0;
+        A(af, "Unknown IP protocol");
+        return uv_ip4_addr(text->data, port, (struct sockaddr_in*) addr);
     }
-    return ch_wr_send(chirp, msg, send_cb);
 }
 
 // .. c:function::
 CH_EXPORT
-ch_error_t
-ch_chirp_send_ts(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
-//    :noindex:
-//
-//    see: :c:func:`ch_chirp_send_ts`
-//
-// .. code-block:: cpp
-//
-{
-    A(chirp->_init == CH_CHIRP_MAGIC, "Not a ch_chirp_t*");
-    ch_chirp_int_t* ichirp = chirp->_;
-    uv_mutex_lock(&ichirp->send_ts_queue_lock);
-    if (msg->_flags & CH_MSG_USED) {
-        EC(chirp, "Message already used. ", "ch_message_t:%p", (void*) msg);
-        return CH_USED;
-    }
-    msg->_send_cb = send_cb;
-    ch_msg_enqueue(&ichirp->send_ts_queue, msg);
-    uv_mutex_unlock(&ichirp->send_ts_queue_lock);
-    uv_async_send(&ichirp->send_ts);
-    return CH_SUCCESS;
-}
-
-// .. c:function::
 void
-ch_wr_free(ch_writer_t* writer)
+ch_write_log(
+        ch_chirp_t* chirp,
+        char*       file,
+        int         line,
+        char*       message,
+        char*       clear,
+        int         error,
+        ...)
 //    :noindex:
 //
-//    see: :c:func:`ch_wr_free`
+//    see: :c:func:`ch_write_log`
 //
 // .. code-block:: cpp
 //
 {
-    ch_connection_t* conn = writer->send_timeout.data;
-    uv_timer_stop(&writer->send_timeout);
-    uv_close((uv_handle_t*) &writer->send_timeout, ch_cn_close_cb);
-    conn->shutdown_tasks += 1;
-}
-
-// .. c:function::
-ch_error_t
-ch_wr_init(ch_writer_t* writer, ch_connection_t* conn)
-//    :noindex:
-//
-//    see: :c:func:`ch_wr_init`
-//
-// .. code-block:: cpp
-//
-{
-
-    ch_chirp_t*     chirp  = conn->chirp;
-    ch_chirp_int_t* ichirp = chirp->_;
-    int             tmp_err;
-    tmp_err = uv_timer_init(ichirp->loop, &writer->send_timeout);
-    if (tmp_err != CH_SUCCESS) {
-        EC(chirp,
-           "Initializing send timeout failed: %d. ",
-           "ch_connection_t:%p",
-           tmp_err,
-           (void*) conn);
-        return CH_INIT_FAIL;
+    va_list args;
+    va_start(args, error);
+    char* tfile = strrchr(file, '/');
+    if (tfile != NULL) {
+        file = tfile + 1;
     }
-    writer->send_timeout.data = conn;
-    return CH_SUCCESS;
-}
-
-// .. c:function::
-ch_error_t
-ch_wr_process_queues(ch_remote_t* remote)
-//    :noindex:
-//
-//    see: :c:func:`ch_wr_process_queues`
-//
-// .. code-block:: cpp
-//
-{
-    A(ch_at_allocated(remote), "Remote not allocated");
-    ch_chirp_t* chirp = remote->chirp;
-    ch_chirp_check_m(chirp);
-    ch_connection_t* conn = remote->conn;
-    ch_message_t*    msg  = NULL;
-    if (conn == NULL) {
-        if (remote->flags & CH_RM_CONN_BLOCKED) {
-            return CH_BUSY;
+    char buf1[1024];
+    if (chirp->_log != NULL) {
+        char buf2[1024];
+        snprintf(buf1, 1024, "%s:%5d %s %s", file, line, message, clear);
+        vsnprintf(buf2, 1024, buf1, args);
+        chirp->_log(buf2, error);
+    } else {
+        uint8_t log_id = ((uint8_t) chirp->_->identity[0]) % 8;
+        char*   tmpl;
+        char*   first;
+        char*   second;
+        if (error) {
+            tmpl   = "%s%02X%02X%s %17s:%5d Error: %s%s %s%s\n";
+            first  = _ch_lg_err;
+            second = _ch_lg_err;
         } else {
-            /* Only connect of the queue is not empty */
-            if (remote->msg_queue != NULL || remote->cntl_msg_queue != NULL) {
-                return _ch_wr_connect(remote);
-            }
+            tmpl   = "%s%02X%02X%s %17s:%5d %s%s %s%s\n";
+            first  = _ch_lg_colors[log_id];
+            second = _ch_lg_reset;
         }
-    } else {
-        A(ch_at_allocated(conn), "Conn not allocated");
-        if (!(conn->flags & CH_CN_CONNECTED) ||
-            conn->flags & CH_CN_SHUTTING_DOWN) {
-            return CH_BUSY;
-        } else if (conn->writer.msg != NULL) {
-            return CH_BUSY;
-        } else if (remote->cntl_msg_queue != NULL) {
-            ch_msg_dequeue(&remote->cntl_msg_queue, &msg);
-            A(msg->type & CH_MSG_ACK || msg->type & CH_MSG_NOOP,
-              "ACK/NOOP expected");
-            ch_wr_write(conn, msg);
-            return CH_SUCCESS;
-        } else if (remote->msg_queue != NULL) {
-            if (chirp->_->config.ACKNOWLEDGE) {
-                if (remote->wait_ack_message == NULL) {
-                    ch_msg_dequeue(&remote->msg_queue, &msg);
-                    remote->wait_ack_message = msg;
-                    ch_wr_write(conn, msg);
-                    return CH_SUCCESS;
-                } else {
-                    return CH_BUSY;
-                }
-            } else {
-                ch_msg_dequeue(&remote->msg_queue, &msg);
-                A(!(msg->type & CH_MSG_REQ_ACK), "REQ_ACK unexpected");
-                ch_wr_write(conn, msg);
-                return CH_SUCCESS;
-            }
-        }
+        /* From doc: If the format is exhausted while arguments remain, the
+         * excess arguments shall be evaluated but are otherwise ignored. */
+        snprintf(
+                buf1,
+                1024,
+                tmpl,
+                first,
+                chirp->_->identity[0],
+                chirp->_->identity[1],
+                second,
+                file,
+                line,
+                _ch_lg_colors[log_id],
+                message,
+                _ch_lg_reset,
+                clear);
+        vfprintf(stderr, buf1, args);
+        fflush(stderr);
     }
-    return CH_EMPTY;
-}
-
-// .. c:function::
-ch_error_t
-ch_wr_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
-//    :noindex:
-//
-//    see: :c:func:`ch_wr_send`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_int_t* ichirp = chirp->_;
-    if (ichirp->flags & CH_CHIRP_CLOSING || ichirp->flags & CH_CHIRP_CLOSED) {
-        if (send_cb != NULL) {
-            send_cb(chirp, msg, CH_SHUTDOWN);
-        }
-        return CH_SHUTDOWN;
-    }
-    ch_remote_t  search_remote;
-    ch_remote_t* remote;
-    msg->_send_cb = send_cb;
-    A(!(msg->_flags & CH_MSG_USED), "Message should not be used");
-    A(!((msg->_flags & CH_MSG_ACK_RECEIVED) ||
-        (msg->_flags & CH_MSG_WRITE_DONE)),
-      "No write state should be set");
-    msg->_flags |= CH_MSG_USED;
-    ch_protocol_t* protocol = &ichirp->protocol;
-
-    ch_rm_init_from_msg(chirp, &search_remote, msg, 0);
-    if (ch_rm_find(protocol->remotes, &search_remote, &remote) != CH_SUCCESS) {
-        remote = ch_alloc(sizeof(*remote));
-        if (remote == NULL) {
-            if (send_cb != NULL) {
-                send_cb(chirp, msg, CH_ENOMEM);
-            }
-            return CH_ENOMEM;
-        }
-        *remote     = search_remote;
-        int tmp_err = ch_rm_insert(&protocol->remotes, remote);
-        A(tmp_err == 0, "Inserting remote failed");
-        (void) (tmp_err);
-    }
-    remote->serial += 1;
-    msg->serial = remote->serial;
-    /* Remote isn't used for 3/4 REUSE_TIME we send a noop */
-    _ch_wr_enqeue_noop_if_needed(remote);
-
-    int queued = 0;
-    if (msg->type & CH_MSG_ACK || msg->type & CH_MSG_NOOP) {
-        queued = remote->cntl_msg_queue != NULL;
-        ch_msg_enqueue(&remote->cntl_msg_queue, msg);
-    } else {
-        queued = remote->msg_queue != NULL;
-        ch_msg_enqueue(&remote->msg_queue, msg);
-    }
-
-    ch_wr_process_queues(remote);
-    if (queued)
-        return CH_QUEUED;
-    else
-        return CH_SUCCESS;
-}
-
-// .. c:function::
-void
-ch_wr_write(ch_connection_t* conn, ch_message_t* msg)
-//    :noindex:
-//
-//    see: :c:func:`ch_wr_write`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t*     chirp  = conn->chirp;
-    ch_writer_t*    writer = &conn->writer;
-    ch_chirp_int_t* ichirp = chirp->_;
-    A(writer->msg == NULL, "Message should be null on new write");
-    writer->msg = msg;
-    int tmp_err = uv_timer_start(
-            &writer->send_timeout,
-            _ch_wr_write_timeout_cb,
-            ichirp->config.TIMEOUT * 1000,
-            0);
-    if (tmp_err != CH_SUCCESS) {
-        EC(chirp,
-           "Starting send timeout failed: %d. ",
-           "ch_connection_t:%p",
-           tmp_err,
-           (void*) conn);
-    }
-
-    ch_sr_msg_to_buf(msg, writer->net_msg);
-    ch_cn_write(
-            conn,
-            writer->net_msg,
-            CH_SR_WIRE_MESSAGE_SIZE,
-            _ch_wr_write_msg_header_cb);
+    va_end(args);
 }
 // ==========
 // Encryption
@@ -9081,7 +9008,26 @@ qs_queue_bind_impl_cx_m(ch_msg, ch_message_t) CH_ALLOW_NL;
 // ---------------------
 
 // .. c:function::
-CH_EXPORT ch_error_t
+CH_EXPORT
+void
+ch_msg_free_data(ch_message_t* message)
+//    :noindex:
+//
+//    see: :c:func:`ch_msg_get_address`
+//
+// .. code-block:: cpp
+//
+{
+    if (message->_flags & CH_MSG_FREE_DATA) {
+        ch_free(message->data);
+        message->_flags &= ~CH_MSG_FREE_DATA;
+    }
+    message->data = NULL;
+}
+
+// .. c:function::
+CH_EXPORT
+ch_error_t
 ch_msg_get_address(const ch_message_t* message, ch_text_address_t* address)
 //    :noindex:
 //
@@ -9207,6 +9153,101 @@ ch_msg_set_data(ch_message_t* message, ch_buf* data, uint32_t len)
 {
     message->data     = data;
     message->data_len = len;
+}
+// ==========
+// Serializer
+// ==========
+//
+
+// Project includes
+// ================
+//
+// .. code-block:: cpp
+//
+/* #include "serializer.h" */
+
+// Definitions
+// ===========
+//
+// .. code-block:: cpp
+
+// .. c:function::
+int
+ch_sr_buf_to_msg(ch_buf* buf, ch_message_t* msg)
+//    :noindex:
+//
+//    see: :c:func:`ch_sr_buf_to_msg`
+//
+// .. code-block:: cpp
+//
+{
+    CH_SR_WIRE_MESSAGE_LAYOUT;
+
+    memcpy(msg->identity, identity, CH_ID_SIZE);
+
+    msg->type       = *type;
+    msg->header_len = ntohs(*header_len);
+    msg->data_len   = ntohl(*data_len);
+    msg->serial     = ntohl(*serial);
+    return CH_SR_WIRE_MESSAGE_SIZE;
+}
+
+// .. c:function::
+int
+ch_sr_msg_to_buf(ch_message_t* msg, ch_buf* buf)
+//    :noindex:
+//
+//    see: :c:func:`ch_sr_msg_to_buf`
+//
+// .. code-block:: cpp
+//
+{
+    CH_SR_WIRE_MESSAGE_LAYOUT;
+
+    memcpy(identity, msg->identity, CH_ID_SIZE);
+
+    *type       = msg->type;
+    *header_len = htons(msg->header_len);
+    *data_len   = htonl(msg->data_len);
+    *serial     = htonl(msg->serial);
+    return CH_SR_WIRE_MESSAGE_SIZE;
+}
+
+// .. c:function::
+int
+ch_sr_buf_to_hs(ch_buf* buf, ch_sr_handshake_t* hs)
+//    :noindex:
+//
+//    see: :c:func:`ch_sr_buf_to_hs`
+//
+// .. code-block:: cpp
+//
+{
+    CH_SR_HANDSHAKE_LAYOUT;
+
+    hs->port = ntohs(*port);
+    memcpy(hs->identity, identity, CH_ID_SIZE);
+
+    return CH_SR_HANDSHAKE_SIZE;
+}
+
+// .. c:function::
+int
+ch_sr_hs_to_buf(ch_sr_handshake_t* hs, ch_buf* buf)
+//    :noindex:
+//
+//    see: :c:func:`ch_sr_hs_to_buf`
+//
+// .. code-block:: cpp
+//
+
+{
+    CH_SR_HANDSHAKE_LAYOUT;
+
+    *port = htons(hs->port);
+    memcpy(identity, hs->identity, CH_ID_SIZE);
+
+    return CH_SR_HANDSHAKE_SIZE;
 }
 // =====
 // Chirp
@@ -10289,9 +10330,9 @@ ch_run(uv_loop_t* loop)
     }
     return tmp_err;
 }
-// ======
-// Reader
-// ======
+// ==========
+// Connection
+// ==========
 //
 
 // Project includes
@@ -10299,58 +10340,71 @@ ch_run(uv_loop_t* loop)
 //
 // .. code-block:: cpp
 //
-/* #include "reader.h" */
+/* #include "connection.h" */
 /* #include "chirp.h" */
 /* #include "common.h" */
-/* #include "connection.h" */
 /* #include "remote.h" */
 /* #include "util.h" */
-/* #include "writer.h" */
+
+// System includes
+// ===============
+//
+// .. code-block:: cpp
+//
+#include <openssl/err.h>
+
+// Data Struct Prototypes
+// ======================
+//
+// .. code-block:: cpp
+
+rb_bind_impl_m(ch_cn, ch_connection_t) CH_ALLOW_NL;
+
+qs_stack_bind_impl_m(ch_cn_st, ch_connection_t) CH_ALLOW_NL;
 
 // Declarations
 // ============
 
 // .. c:function::
 static void
-_ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read);
+_ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error);
 //
-//    Handle a handshake on the given connection.
+//    Abort one message in queue, because connecting failed.
 //
-//    Ensures, that the byte count which shall be read is at least the same as
-//    the handshake size.
+//    :param ch_remote_t* remote: Remote failed to connect.
+//    :param ch_error_t error: Status returned by connect.
+
+// .. c:function::
+static ch_error_t
+_ch_cn_allocate_buffers(ch_connection_t* conn);
 //
-//    The given buffer gets copied into the handshake structure of the reader.
-//    Then the port, the maximum time until a timeout happens and the remote
-//    identity are applied to the given connection coming from the readers
-//    handshake.
+//    Allocate the connections communication buffers.
 //
-//    It is then ensured, that the address of the peer connected to the TCP
-//    handle (TCP stream) of the connections client can be resolved.
+//    :param ch_connection_t* conn: Connection
 //
-//    If the latter was successful, the IP protocol and address are then applied
-//    from the resolved address structure to the connection.
-//
-//    The given connection gets then searched on the protocols pool of
-//    connections. If the connection is already known, the found duplicate gets
-//    removed from the pool of connections and gets then added to another pool
-//    (of the protocol), holding only such old connections.
-//
-//    Finally, the given connection is added to the protocols pool of
-//    connections.
-//
-//    :param ch_connection_t* conn: Pointer to a connection instance.
-//    :param ch_readert* reader:    Pointer to a reader instance. Its handshake
-//                                  data structure is the target of this
-//                                  handshake
-//    :param ch_buf* buf:           Buffer containing bytes read, acts as data
-//                                  source
-//    :param size_t read:           Count of bytes read
 //
 // .. c:function::
 static void
-_ch_rd_handshake_cb(uv_write_t* req, int status);
+_ch_cn_closing(ch_connection_t* conn);
 //
-//    Called when handshake is sent.
+//    Called by ch_cn_shutdown to enter the closing stage.
+//
+//    :param ch_connection_t: Connection to close
+
+// .. c:function::
+static void
+_ch_cn_partial_write(ch_connection_t* conn);
+//
+//    Called by libuv when pending data has been sent.
+//
+//    :param ch_connection_t* conn: Connection
+//
+
+// .. c:function::
+static void
+_ch_cn_send_pending_cb(uv_write_t* req, int status);
+//
+//    Called during handshake by libuv when pending data is sent.
 //
 //    :param uv_write_t* req: Write request type, holding the
 //                            connection handle
@@ -10359,230 +10413,236 @@ _ch_rd_handshake_cb(uv_write_t* req, int status);
 
 // .. c:function::
 static void
-_ch_rd_handle_msg(
-        ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg);
+_ch_cn_write_cb(uv_write_t* req, int status);
 //
-//    Send ack and call message-handler
+//    Callback used for ch_cn_write.
 //
-//    :param ch_connection_t* conn:  Pointer to a connection instance.
-//    :param ch_reader_t* reader:    Pointer to a reader instance.
-//    :param ch_message_t* msg:      Message that was received
+//    :param uv_write_t* req: Write request
+//    :param int status: Write status
 //
 
-// .. c:function::
-static ssize_t
-_ch_rd_read_buffer(
-        ch_connection_t* conn,
-        ch_reader_t*     reader,
-        ch_message_t*    msg,
-        ch_buf*          src_buf,
-        size_t           to_read,
-        char**           assign_buf,
-        ch_buf*          dest_buf,
-        size_t           dest_buf_size,
-        uint32_t         expected,
-        int              free_flag,
-        ssize_t*         bytes_handled);
-//
-//    Read data from the read buffer provided by libuv ``src_buf`` to the field
-//    of the message ``assign_buf``. A preallocated buffer will be used if the
-//    message is small enough, otherwise a buffer will be allocated. The
-//    function also handles partial reads.
-
-// .. c:function::
-static inline ssize_t
-_ch_rd_read_step(
-        ch_connection_t* conn,
-        ch_buf*          buf,
-        size_t           bytes_read,
-        ssize_t          bytes_handled,
-        int*             stop,
-        int*             cont);
-//
-//    One step in the reader state machine.
-//
-//    :param ch_connection_t* conn: Connection the data was read from.
-//    :param void* buffer:          The buffer containing ``read`` bytes read.
-//    :param size_t bytes_read:     The bytes read.
-//    :param size_t bytes_handler:  The bytes handled in the last step
-//    :param int* stop:             (Out) Stop the reading process.
-//    :param int* cont:             (Out) Request continuation
-//
-
-// .. c:function::
-static inline ch_error_t
-_ch_rd_verify_msg(ch_connection_t* conn, ch_message_t* msg);
-//
-//    One step in the reader state machine.
-//
-//    :param ch_connection_t* conn: Connection the message came from
-//    :param ch_message_t* msg:     Message to verify
-
-//
 // Definitions
 // ===========
-
-// .. c:type:: _ch_rd_state_names
-//
-//    Names of reader states for logging.
 //
 // .. code-block:: cpp
-//
-char* _ch_rd_state_names[] = {
-        "CH_RD_START",
-        "CH_RD_HANDSHAKE",
-        "CH_RD_WAIT",
-        "CH_RD_HANDLER",
-        "CH_RD_HEADER",
-        "CH_RD_DATA",
-};
+
+MINMAX_FUNCS(size_t)
 
 // .. c:function::
 static void
-_ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read)
+_ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error)
 //    :noindex:
 //
-//    see: :c:func:`_ch_rd_handshake`
+//    see: :c:func:`_ch_cn_abort_one_message`
 //
 // .. code-block:: cpp
 //
 {
-    ch_remote_t       search_remote;
-    ch_connection_t*  old_conn = NULL;
-    ch_connection_t*  tmp_conn = NULL;
-    ch_chirp_t*       chirp    = conn->chirp;
-    ch_remote_t*      remote   = NULL;
-    ch_chirp_int_t*   ichirp   = chirp->_;
-    ch_protocol_t*    protocol = &ichirp->protocol;
-    ch_sr_handshake_t hs_tmp;
-    uv_timer_stop(&conn->connect_timeout);
-    conn->flags |= CH_CN_CONNECTED;
-    if (conn->flags & CH_CN_INCOMING) {
-        A(ch_cn_delete(&protocol->handshake_conns, conn, &tmp_conn) == 0,
-          "Handshake should be tracked");
-        A(conn == tmp_conn, "Deleted wrong connection");
+    ch_message_t* msg = NULL;
+    if (remote->cntl_msg_queue != NULL) {
+        ch_msg_dequeue(&remote->cntl_msg_queue, &msg);
+    } else if (remote->msg_queue != NULL) {
+        ch_msg_dequeue(&remote->msg_queue, &msg);
     }
-    if (read < CH_SR_HANDSHAKE_SIZE) {
+    if (msg != NULL) {
+#ifdef CH_ENABLE_LOGGING
+        {
+            char id[CH_ID_SIZE * 2 + 1];
+            ch_bytes_to_hex(
+                    msg->identity, sizeof(msg->identity), id, sizeof(id));
+            if (msg->type & CH_MSG_ACK) {
+                LC(remote->chirp,
+                   "Abort message on queue id: %s\n"
+                   "                             "
+                   "ch_message_t:%p",
+                   id,
+                   (void*) msg);
+            }
+        }
+#endif
+        ch_send_cb_t cb = msg->_send_cb;
+        if (cb != NULL) {
+            msg->_send_cb = NULL;
+            cb(remote->chirp, msg, error);
+        }
+    }
+}
+
+// .. c:function::
+static ch_error_t
+_ch_cn_allocate_buffers(ch_connection_t* conn)
+//    :noindex:
+//
+//    See: :c:func:`_ch_cn_allocate_buffers`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t* chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    ch_chirp_int_t* ichirp = chirp->_;
+    size_t          size   = ichirp->config.BUFFER_SIZE;
+    if (size == 0) {
+        size = CH_BUFFER_SIZE;
+    }
+    conn->buffer_uv   = ch_alloc(size);
+    conn->buffer_size = size;
+    if (conn->flags & CH_CN_ENCRYPTED) {
+        conn->buffer_wtls = ch_alloc(size);
+        size              = ch_min_size_t(size, CH_ENC_BUFFER_SIZE);
+        conn->buffer_rtls = ch_alloc(size);
+    }
+    int alloc_nok = 0;
+    if (conn->flags & CH_CN_ENCRYPTED) {
+        alloc_nok =
+                !(conn->buffer_uv && conn->buffer_wtls && conn->buffer_rtls);
+    } else {
+        alloc_nok = !conn->buffer_uv;
+    }
+    if (alloc_nok) {
         EC(chirp,
-           "Illegal handshake size -> shutdown. ",
+           "Could not allocate memory for libuv and tls. ",
            "ch_connection_t:%p",
            (void*) conn);
-        ch_cn_shutdown(conn, CH_PROTOCOL_ERROR);
-        return;
+        return CH_ENOMEM;
     }
-    ch_sr_buf_to_hs(buf, &hs_tmp);
-    conn->port = hs_tmp.port;
-    memcpy(conn->remote_identity, hs_tmp.identity, CH_ID_SIZE);
-    ch_rm_init_from_conn(chirp, &search_remote, conn, 0);
-    if (ch_rm_find(protocol->remotes, &search_remote, &remote) != CH_SUCCESS) {
-        remote = ch_alloc(sizeof(*remote));
-        if (remote == NULL) {
-            ch_cn_shutdown(conn, CH_ENOMEM);
+    conn->buffer_rtls_size = size;
+    conn->buffer_uv_uv     = uv_buf_init(conn->buffer_uv, conn->buffer_size);
+    conn->buffer_wtls_uv   = uv_buf_init(conn->buffer_wtls, conn->buffer_size);
+    conn->flags |= CH_CN_INIT_BUFFERS;
+    A((conn->flags & CH_CN_INIT) == CH_CN_INIT,
+      "Connection not fully initialized");
+    return CH_SUCCESS;
+}
+
+// .. c:function::
+static void
+_ch_cn_closing(ch_connection_t* conn)
+//    :noindex:
+//
+//    see: :c:func:`_ch_cn_closing`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t* chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    LC(chirp, "Shutdown callback called. ", "ch_connection_t:%p", (void*) conn);
+    conn->flags &= ~CH_CN_CONNECTED;
+    uv_handle_t* handle = (uv_handle_t*) &conn->client;
+    if (uv_is_closing(handle)) {
+        EC(chirp,
+           "Connection already closing on closing. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+    } else {
+        uv_read_stop((uv_stream_t*) &conn->client);
+        if (conn->flags & CH_CN_INIT_READER_WRITER) {
+            ch_wr_free(&conn->writer);
+            ch_rd_free(&conn->reader);
+            conn->flags &= ~CH_CN_INIT_READER_WRITER;
+        }
+        if (conn->flags & CH_CN_INIT_CLIENT) {
+            uv_close(handle, ch_cn_close_cb);
+            conn->shutdown_tasks += 1;
+            conn->flags &= ~CH_CN_INIT_CLIENT;
+        }
+        if (conn->flags & CH_CN_INIT_CONNECT_TIMEOUT) {
+            uv_close((uv_handle_t*) &conn->connect_timeout, ch_cn_close_cb);
+            conn->flags &= ~CH_CN_INIT_CONNECT_TIMEOUT;
+            conn->shutdown_tasks += 1;
+        }
+        LC(chirp,
+           "Closing connection after shutdown. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+    }
+}
+
+// .. c:function::
+static void
+_ch_cn_partial_write(ch_connection_t* conn)
+//    :noindex:
+//
+//    See: :c:func:`_ch_cn_partial_write`
+//
+// .. code-block:: cpp
+//
+{
+    size_t      bytes_encrypted = 0;
+    size_t      bytes_read      = 0;
+    ch_chirp_t* chirp           = conn->chirp;
+    ch_chirp_check_m(chirp);
+    A(!(conn->flags & CH_CN_BUF_WTLS_USED), "The wtls buffer is still used");
+    A(!(conn->flags & CH_CN_WRITE_PENDING), "Another uv write is pending");
+#ifdef CH_ENABLE_ASSERTS
+    conn->flags |= CH_CN_WRITE_PENDING;
+    conn->flags |= CH_CN_BUF_WTLS_USED;
+#endif
+    for (;;) {
+        int can_write_more = 1;
+        int pending        = BIO_pending(conn->bio_app);
+        while (pending && can_write_more) {
+            ssize_t read = BIO_read(
+                    conn->bio_app,
+                    conn->buffer_wtls + bytes_read,
+                    conn->buffer_size - bytes_read);
+            A(read > 0, "BIO_read failure unexpected");
+            if (read < 1) {
+                EC(chirp,
+                   "SSL error reading from BIO, shutting down connection. ",
+                   "ch_connection_t:%p",
+                   (void*) conn);
+                ch_cn_shutdown(conn, CH_TLS_ERROR);
+                return;
+            }
+            bytes_read += read;
+            int is_write_size_valid =
+                    (bytes_encrypted + conn->write_written) < conn->write_size;
+            int is_buffer_size_valid = bytes_read < conn->buffer_size;
+
+            can_write_more = is_write_size_valid && is_buffer_size_valid;
+            pending        = BIO_pending(conn->bio_app);
+        }
+        if (!can_write_more) {
+            break;
+        }
+        int tmp_err = SSL_write(
+                conn->ssl,
+                conn->write_buffer + bytes_encrypted + conn->write_written,
+                conn->write_size - bytes_encrypted - conn->write_written);
+        bytes_encrypted += tmp_err;
+        A(tmp_err > -1, "SSL_write failure unexpected");
+        if (tmp_err < 0) {
+            EC(chirp,
+               "SSL error writing to BIO, shutting down connection. ",
+               "ch_connection_t:%p",
+               (void*) conn);
+            ch_cn_shutdown(conn, CH_TLS_ERROR);
             return;
         }
-        *remote     = search_remote;
-        int tmp_err = ch_rm_insert(&protocol->remotes, remote);
-        A(tmp_err == 0, "Inserting remote failed");
-        (void) (tmp_err);
     }
-    conn->remote = remote;
-    /* If there is a network race condition we replace the old connection and
-     * leave the old one for garbage collection. */
-    old_conn     = remote->conn;
-    remote->conn = conn;
-    /* By definition, the connection that last completes the handshake is the
-     * new one, the other the old one. Since we store outgoing connections at
-     * the moment we connect, both connections might fight the place in
-     * old_conns. It would be possible to prevent this, but removing the new
-     * connection from old_conns is easier and just as correct. */
-    ch_cn_delete(&protocol->old_connections, conn, &tmp_conn);
-    if (old_conn != NULL) {
-        /* If we found the current connection everything is ok */
-        if (conn != old_conn) {
-            L(chirp,
-              "ch_connection_t:%p replaced ch_connection_t:%p",
-              (void*) conn,
-              (void*) old_conn);
-            ch_cn_insert(&protocol->old_connections, old_conn);
-        }
-    }
-#ifdef CH_ENABLE_LOGGING
-    {
-        ch_text_address_t addr;
-        uint8_t*          identity = conn->remote_identity;
-        char              id[CH_ID_SIZE * 2 + 1];
-        uv_inet_ntop(conn->ip_protocol, conn->address, addr.data, sizeof(addr));
-        ch_bytes_to_hex(identity, sizeof(identity), id, sizeof(id));
-        LC(chirp,
-           "Handshake with remote %s:%d (%s) done. ",
-           "ch_connection_t:%p",
-           addr.data,
-           conn->port,
-           id,
-           (void*) conn);
-    }
-#endif
-    A(conn->remote != NULL, "The remote has to be set");
-    ch_wr_process_queues(conn->remote);
+    conn->buffer_wtls_uv.len = bytes_read;
+    uv_write(
+            &conn->write_req,
+            (uv_stream_t*) &conn->client,
+            &conn->buffer_wtls_uv,
+            1,
+            _ch_cn_write_cb);
+    LC(chirp,
+       "Called uv_write with %d bytes. ",
+       "ch_connection_t:%p",
+       (int) bytes_read,
+       (void*) conn);
+    conn->write_written += bytes_encrypted;
 }
 
 // .. c:function::
 static void
-_ch_rd_handle_msg(ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg)
+_ch_cn_send_pending_cb(uv_write_t* req, int status)
 //    :noindex:
 //
-//    see: :c:func:`_ch_rd_handle_msg`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t*     chirp  = conn->chirp;
-    ch_chirp_int_t* ichirp = chirp->_;
-#ifdef CH_ENABLE_LOGGING
-    {
-        ch_text_address_t addr;
-        uint8_t*          identity = conn->remote_identity;
-        char              id[CH_ID_SIZE * 2 + 1];
-        uv_inet_ntop(conn->ip_protocol, conn->address, addr.data, sizeof(addr));
-        ch_bytes_to_hex(identity, sizeof(identity), id, sizeof(id));
-        LC(chirp,
-           "Read message with id: %s\n"
-           "                             "
-           "serial:%u\n"
-           "                             "
-           "from %s:%d type:%d data_len:%u. ",
-           "ch_connection_t:%p",
-           id,
-           msg->serial,
-           addr.data,
-           conn->port,
-           msg->type,
-           msg->data_len,
-           (void*) conn);
-    }
-#endif
-
-    reader->state   = CH_RD_WAIT;
-    reader->handler = NULL;
-    conn->timestamp = uv_hrtime();
-    if (conn->remote != NULL) {
-        conn->remote->timestamp = conn->timestamp;
-    }
-
-    if (ichirp->recv_cb != NULL) {
-        ichirp->recv_cb(chirp, msg);
-    } else {
-        E(chirp, "No receiving callback function registered", CH_NO_ARG);
-        ch_chirp_release_message(msg);
-    }
-}
-
-// .. c:function::
-static void
-_ch_rd_handshake_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_rd_handshake_cb`
+//    see: :c:func:`_ch_cn_send_pending_cb`
 //
 // .. code-block:: cpp
 //
@@ -10590,432 +10650,432 @@ _ch_rd_handshake_cb(uv_write_t* req, int status)
     ch_connection_t* conn  = req->data;
     ch_chirp_t*      chirp = conn->chirp;
     ch_chirp_check_m(chirp);
+#ifdef CH_ENABLE_ASSERTS
+    conn->flags &= ~CH_CN_WRITE_PENDING;
+    conn->flags &= ~CH_CN_BUF_WTLS_USED;
+#endif
     if (status < 0) {
         LC(chirp,
-           "Sending handshake failed. ",
+           "Sending pending data failed. ",
            "ch_connection_t:%p",
            (void*) conn);
         ch_cn_shutdown(conn, CH_WRITE_ERROR);
         return;
     }
-    /* Check if we already have a message (just after handshake)
-     * this is here so we have no overlapping ch_cn_write. If the read causes a
-     * ack message to be sent and the write of the handshake is not finished,
-     * chirp would assert or be in undefined state. */
-    if (conn->flags & CH_CN_ENCRYPTED) {
-        int stop;
-        ch_pr_decrypt_read(conn, &stop);
-    }
-}
-
-// .. c:function::
-static inline ssize_t
-_ch_rd_read_step(
-        ch_connection_t* conn,
-        ch_buf*          buf,
-        size_t           bytes_read,
-        ssize_t          bytes_handled,
-        int*             stop,
-        int*             cont)
-//    :noindex:
-//
-//    see: :c:func:`ch_rd_free`
-//
-// .. code-block:: cpp
-//
-{
-    ch_message_t*    msg;
-    ch_bf_handler_t* handler;
-    ch_chirp_t*      chirp   = conn->chirp;
-    ch_chirp_int_t*  ichirp  = chirp->_;
-    ch_reader_t*     reader  = &conn->reader;
-    int              to_read = bytes_read - bytes_handled;
-
-    LC(chirp,
-       "Reader state: %s. ",
-       "ch_connection_t:%p",
-       _ch_rd_state_names[reader->state],
-       (void*) conn);
-
-    switch (reader->state) {
-    case CH_RD_START: {
-        ch_sr_handshake_t hs_tmp;
-        ch_buf            hs_buf[CH_SR_HANDSHAKE_SIZE];
-        hs_tmp.port = ichirp->public_port;
-        memcpy(hs_tmp.identity, ichirp->identity, CH_ID_SIZE);
-        ch_sr_hs_to_buf(&hs_tmp, hs_buf);
-        ch_cn_write(conn, hs_buf, CH_SR_HANDSHAKE_SIZE, _ch_rd_handshake_cb);
-        reader->state = CH_RD_HANDSHAKE;
-        break;
-    }
-    case CH_RD_HANDSHAKE: {
-        if (bytes_read == 0)
-            return -1;
-        /* We expect that complete handshake arrives at once,
-         * check in _ch_rd_handshake */
-        _ch_rd_handshake(conn, buf + bytes_handled, to_read);
-        bytes_handled += sizeof(ch_sr_handshake_t);
-        reader->state = CH_RD_WAIT;
-        break;
-    }
-    case CH_RD_WAIT: {
-        if (bytes_read == 0)
-            return -1;
-        ch_message_t* wire_msg = &reader->wire_msg;
-        ssize_t       reading  = CH_SR_WIRE_MESSAGE_SIZE - reader->bytes_read;
-        if (to_read >= reading) {
-            /* We can read everything */
-            memcpy(reader->net_msg + reader->bytes_read,
-                   buf + bytes_handled,
-                   reading);
-            reader->bytes_read = 0; /* Reset partial buffer reads */
-            bytes_handled += reading;
-        } else {
-            memcpy(reader->net_msg + reader->bytes_read,
-                   buf + bytes_handled,
-                   to_read);
-            reader->bytes_read += to_read;
-            bytes_handled += to_read;
-            return bytes_handled;
-        }
-        ch_sr_buf_to_msg(reader->net_msg, wire_msg);
-        int tmp_err = _ch_rd_verify_msg(conn, wire_msg);
-        if (tmp_err != CH_SUCCESS) {
-            ch_cn_shutdown(conn, tmp_err);
-            return -1; /* Shutdown */
-        }
-        if (wire_msg->type & CH_MSG_NOOP) {
-            LC(chirp, "Received NOOP.", "ch_connection_t", conn);
-            conn->timestamp = uv_hrtime();
-            if (conn->remote != NULL) {
-                conn->remote->timestamp = conn->timestamp;
-            }
-            break;
-        } else if (wire_msg->type & CH_MSG_ACK) {
-            ch_message_t* wam = conn->remote->wait_ack_message;
-            /* Since we abort wam on shutdown, we can receive acks for a old
-             * wam */
-            if (wam != NULL) {
-                if (memcmp(wam->identity, wire_msg->identity, CH_ID_SIZE) ==
-                    0) {
-                    wam->_flags |= CH_MSG_ACK_RECEIVED;
-                    conn->remote->wait_ack_message = NULL;
-                    ch_chirp_finish_message(chirp, conn, wam, CH_SUCCESS);
-                }
-            }
-            break;
-        } else {
-            reader->state = CH_RD_HANDLER;
-        }
-        /* Since we do not read any data in CH_RD_HANDLER, we need to ask for
-         * continuation. I wanted to solve this with a fall-though-case, but
-         * linters and compilers are complaining. */
-        *cont = 1;
-        break;
-    }
-    case CH_RD_HANDLER: {
-        ch_message_t* wire_msg = &reader->wire_msg;
-        if (reader->handler == NULL) {
-            reader->handler = ch_bf_acquire(reader->pool);
-            if (reader->handler == NULL) {
-                LC(chirp, "Stop reading", "ch_connection_t:%p", conn);
-                if (!(conn->flags & CH_CN_STOPPED)) {
-                    LC(chirp, "Stop stream", "ch_connection_t:%p", conn);
-                    uv_read_stop((uv_stream_t*) &conn->client);
-                }
-                conn->flags |= CH_CN_STOPPED;
-                *stop = 1;
-                return bytes_handled;
-            }
-        }
-        handler = reader->handler;
-        msg     = &handler->msg;
-        /* Copy the wire message */
-        memcpy(msg, wire_msg, ((char*) &wire_msg->header) - ((char*) wire_msg));
-        msg->ip_protocol = conn->ip_protocol;
-        msg->port        = conn->port;
-        memcpy(msg->remote_identity, conn->remote_identity, CH_ID_SIZE);
-        memcpy(msg->address,
-               conn->address,
-               (msg->ip_protocol == AF_INET6) ? CH_IP_ADDR_SIZE
-                                              : CH_IP4_ADDR_SIZE);
-        /* Direct jump to next read state */
-        if (msg->header_len > 0) {
-            reader->state = CH_RD_HEADER;
-        } else if (msg->data_len > 0) {
-            reader->state = CH_RD_DATA;
-        } else {
-            _ch_rd_handle_msg(conn, reader, msg);
-        }
-        break;
-    }
-    case CH_RD_HEADER: {
-        if (bytes_read == 0)
-            return -1;
-        handler = reader->handler;
-        msg     = &handler->msg;
-        if (_ch_rd_read_buffer(
-                    conn,
-                    reader,
-                    msg,
-                    buf + bytes_handled,
-                    to_read,
-                    &msg->header,
-                    handler->header,
-                    CH_BF_PREALLOC_HEADER,
-                    msg->header_len,
-                    CH_MSG_FREE_HEADER,
-                    &bytes_handled) != CH_SUCCESS) {
-            return -1; /* Shutdown */
-        }
-        /* Direct jump to next read state */
-        if (msg->data_len > 0) {
-            reader->state = CH_RD_DATA;
-        } else {
-            _ch_rd_handle_msg(conn, reader, msg);
-        }
-        break;
-    }
-    case CH_RD_DATA: {
-        if (bytes_read == 0)
-            return -1;
-        handler = reader->handler;
-        msg     = &handler->msg;
-        if (_ch_rd_read_buffer(
-                    conn,
-                    reader,
-                    msg,
-                    buf + bytes_handled,
-                    to_read,
-                    &msg->data,
-                    handler->data,
-                    CH_BF_PREALLOC_DATA,
-                    msg->data_len,
-                    CH_MSG_FREE_DATA,
-                    &bytes_handled) != CH_SUCCESS) {
-            return -1; /* Shutdown */
-        }
-        _ch_rd_handle_msg(conn, reader, msg);
-        break;
-    }
-    default:
-        A(0, "Unknown reader state");
-        break;
-    }
-    return bytes_handled;
-}
-
-// .. c:function::
-static inline ch_error_t
-_ch_rd_verify_msg(ch_connection_t* conn, ch_message_t* msg)
-//    :noindex:
-//
-//    see: :c:func:`_ch_rd_verify_msg`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t*     chirp               = conn->chirp;
-    ch_chirp_int_t* ichirp              = chirp->_;
-    uint32_t        total_wire_msg_size = msg->header_len + msg->data_len;
-    if (total_wire_msg_size > ichirp->config.MAX_MSG_SIZE) {
-        EC(chirp,
-           "Message size exceeds hardlimit. ",
+    if (conn->flags & CH_CN_SHUTTING_DOWN) {
+        LC(chirp,
+           "Write shutdown bytes to connection successful. ",
            "ch_connection_t:%p",
            (void*) conn);
-        return CH_ENOMEM;
+    } else {
+        LC(chirp,
+           "Write handshake bytes to connection successful. ",
+           "ch_connection_t:%p",
+           (void*) conn);
     }
-    if ((msg->type & CH_MSG_ACK) || (msg->type & CH_MSG_NOOP)) {
-        if (msg->header_len != 0 || msg->data_len != 0) {
-            EC(chirp,
-               "A ack/noop may not have header or data set. ",
-               "ch_connection_t:%p",
-               (void*) conn);
-            return CH_PROTOCOL_ERROR;
-        }
-        if (msg->type & CH_MSG_REQ_ACK) {
-            EC(chirp,
-               "A ack/noop may not require an ack. ",
-               "ch_connection_t:%p",
-               (void*) conn);
-            return CH_PROTOCOL_ERROR;
+    ch_cn_send_if_pending(conn);
+}
+
+// .. c:function::
+static void
+_ch_cn_write_cb(uv_write_t* req, int status)
+//    :noindex:
+//
+//    see: :c:func:`_ch_cn_write_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+#ifdef CH_ENABLE_ASSERTS
+    conn->flags &= ~CH_CN_WRITE_PENDING;
+    conn->flags &= ~CH_CN_BUF_WTLS_USED;
+#endif
+    if (status < 0) {
+        LC(chirp,
+           "Sending pending data failed. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+        uv_write_cb cb       = conn->write_callback;
+        conn->write_callback = NULL;
+        cb(req, CH_WRITE_ERROR);
+        ch_cn_shutdown(conn, CH_WRITE_ERROR);
+        return;
+    }
+    /* Check if we can write data */
+    int pending = BIO_pending(conn->bio_app);
+    if (conn->write_size > conn->write_written || pending) {
+        _ch_cn_partial_write(conn);
+        LC(chirp,
+           "Partially encrypted %d of %d bytes. ",
+           "ch_connection_t:%p",
+           (int) conn->write_written,
+           (int) conn->write_size,
+           (void*) conn);
+    } else {
+        A(pending == 0, "Unexpected pending data on TLS write");
+        LC(chirp,
+           "Completely sent %d bytes (unenc). ",
+           "ch_connection_t:%p",
+           (int) conn->write_written,
+           (void*) conn);
+        conn->write_written = 0;
+        conn->write_size    = 0;
+        if (conn->write_callback != NULL) {
+            uv_write_cb cb       = conn->write_callback;
+            conn->write_callback = NULL;
+            cb(req, status);
         }
     }
+}
+
+// .. c:function::
+void
+ch_cn_close_cb(uv_handle_t* handle)
+//    :noindex:
+//
+//    see: :c:func:`ch_cn_close_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = handle->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    ch_chirp_int_t* ichirp = chirp->_;
+    conn->shutdown_tasks -= 1;
+    A(conn->shutdown_tasks > -1, "Shutdown semaphore dropped below zero");
+    LC(chirp,
+       "Shutdown semaphore (%d). ",
+       "ch_connection_t:%p",
+       conn->shutdown_tasks,
+       (void*) conn);
+    /* In production we allow the semaphore to drop below 0, but we log an
+     * error. */
+    if (conn->shutdown_tasks < 0) {
+        E(chirp,
+          "Shutdown semaphore dropped blow 0. ch_connection_t: %p",
+          conn);
+    }
+    if (conn->shutdown_tasks < 1) {
+        if (conn->flags & CH_CN_DO_CLOSE_ACCOUTING) {
+            ichirp->closing_tasks -= 1;
+            LC(chirp,
+               "Closing semaphore (%d). ",
+               "uv_handle_t:%p",
+               ichirp->closing_tasks,
+               (void*) handle);
+        }
+        if (conn->flags & CH_CN_INIT_BUFFERS) {
+            A(conn->buffer_uv, "Initialized buffers inconsistent");
+            ch_free(conn->buffer_uv);
+            if (conn->flags & CH_CN_ENCRYPTED) {
+                A(conn->buffer_wtls, "Initialized buffers inconsistent");
+                A(conn->buffer_rtls, "Initialized buffers inconsistent");
+                ch_free(conn->buffer_wtls);
+                ch_free(conn->buffer_rtls);
+            }
+            conn->flags &= ~CH_CN_INIT_BUFFERS;
+        }
+        if (conn->flags & CH_CN_ENCRYPTED) {
+            /* The doc says this frees conn->bio_ssl I tested it. let's
+             * hope they never change that. */
+            if (conn->flags & CH_CN_INIT_ENCRYPTION) {
+                A(conn->ssl, "Initialized ssl handles inconsistent");
+                A(conn->bio_app, "Initialized ssl handles inconsistent");
+                SSL_free(conn->ssl);
+                BIO_free(conn->bio_app);
+            }
+        }
+        /* Since we define a unencrypted connection as CH_CN_INIT_ENCRYPTION. */
+        conn->flags &= ~CH_CN_INIT_ENCRYPTION;
+        A(!(conn->flags & CH_CN_INIT),
+          "Connection resources haven't been freed completely");
+        A(!(conn->flags & CH_CN_CONNECTED),
+          "Connection not properly disconnected");
+        ch_free(conn);
+        LC(chirp,
+           "Closed connection, closing semaphore (%d). ",
+           "ch_connection_t:%p",
+           chirp->_->closing_tasks,
+           (void*) conn);
+    }
+}
+
+// .. c:function::
+ch_error_t
+ch_cn_init(ch_chirp_t* chirp, ch_connection_t* conn, uint8_t flags)
+//    :noindex:
+//
+//    see: :c:func:`ch_cn_init`
+//
+// .. code-block:: cpp
+//
+{
+    int tmp_err;
+
+    ch_chirp_int_t* ichirp = chirp->_;
+    conn->chirp            = chirp;
+    conn->write_req.data   = conn;
+    conn->flags |= flags;
+    conn->timestamp = uv_now(ichirp->loop);
+    tmp_err         = ch_rd_init(&conn->reader, conn, ichirp);
+    if (tmp_err != CH_SUCCESS) {
+        return tmp_err;
+    }
+    tmp_err = ch_wr_init(&conn->writer, conn);
+    if (tmp_err != CH_SUCCESS) {
+        return tmp_err;
+    }
+    conn->flags |= CH_CN_INIT_READER_WRITER;
+    if (conn->flags & CH_CN_ENCRYPTED) {
+        tmp_err = ch_cn_init_enc(chirp, conn);
+    }
+    if (tmp_err != CH_SUCCESS) {
+        return tmp_err;
+    }
+    /* An unencrypted connection also has CH_CN_INIT_ENCRYPTION */
+    conn->flags |= CH_CN_INIT_ENCRYPTION;
+    return _ch_cn_allocate_buffers(conn);
+}
+
+// .. c:function::
+ch_error_t
+ch_cn_init_enc(ch_chirp_t* chirp, ch_connection_t* conn)
+//    :noindex:
+//
+//    see: :c:func:`ch_cn_init_enc`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_int_t* ichirp = chirp->_;
+    conn->ssl              = SSL_new(ichirp->encryption.ssl_ctx);
+    if (conn->ssl == NULL) {
+#ifdef CH_ENABLE_LOGGING
+        ERR_print_errors_fp(stderr);
+#endif
+        EC(chirp, "Could not create SSL. ", "ch_connection_t:%p", (void*) conn);
+        return CH_TLS_ERROR;
+    }
+    if (BIO_new_bio_pair(&(conn->bio_ssl), 0, &(conn->bio_app), 0) != 1) {
+#ifdef CH_ENABLE_LOGGING
+        ERR_print_errors_fp(stderr);
+#endif
+        EC(chirp,
+           "Could not create BIO pair. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+        SSL_free(conn->ssl);
+        return CH_TLS_ERROR;
+    }
+    SSL_set_bio(conn->ssl, conn->bio_ssl, conn->bio_ssl);
+#ifdef CH_CN_PRINT_CIPHERS
+    STACK_OF(SSL_CIPHER)* ciphers = SSL_get_ciphers(conn->ssl);
+    while (sk_SSL_CIPHER_num(ciphers) > 0)
+        fprintf(stderr,
+                "%s\n",
+                SSL_CIPHER_get_name(sk_SSL_CIPHER_pop(ciphers)));
+    sk_SSL_CIPHER_free(ciphers);
+
+#endif
+    LC(chirp, "SSL context created. ", "ch_connection_t:%p", (void*) conn);
     return CH_SUCCESS;
 }
 
 // .. c:function::
 void
-ch_rd_free(ch_reader_t* reader)
+ch_cn_read_alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf)
 //    :noindex:
 //
-//    see: :c:func:`ch_rd_free`
+//    see: :c:func:`ch_cn_read_alloc_cb`
 //
 // .. code-block:: cpp
 //
 {
-    /* Remove the reference to connection, since it is now invalid */
-    reader->pool->conn = NULL;
-    ch_bf_free(reader->pool);
+    /* That whole suggested size concept doesn't work, we have to allocated
+     * consistent buffers. */
+    (void) (suggested_size);
+    ch_connection_t* conn  = handle->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    A(!(conn->flags & CH_CN_BUF_UV_USED), "UV buffer still used");
+#ifdef CH_ENABLE_ASSERTS
+    conn->flags |= CH_CN_BUF_UV_USED;
+#endif
+    buf->base = conn->buffer_uv;
+    buf->len  = conn->buffer_size;
+}
+
+// .. c:function::
+void
+ch_cn_send_if_pending(ch_connection_t* conn)
+//    :noindex:
+//
+//    see: :c:func:`ch_cn_send_if_pending`
+//
+// .. code-block:: cpp
+//
+{
+    A(!(conn->flags & CH_CN_WRITE_PENDING), "Another write is still pending");
+    ch_chirp_t* chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    int pending = BIO_pending(conn->bio_app);
+    if (pending < 1) {
+        if (!(conn->flags & CH_CN_TLS_HANDSHAKE ||
+              conn->flags & CH_CN_SHUTTING_DOWN)) {
+            int stop;
+            ch_rd_read(conn, NULL, 0, &stop); /* Start the reader */
+        }
+        return;
+    }
+    A(!(conn->flags & CH_CN_BUF_WTLS_USED), "The wtls buffer is still used");
+#ifdef CH_ENABLE_ASSERTS
+    conn->flags |= CH_CN_BUF_WTLS_USED;
+    conn->flags |= CH_CN_WRITE_PENDING;
+#endif
+    ssize_t read =
+            BIO_read(conn->bio_app, conn->buffer_wtls, conn->buffer_size);
+    conn->buffer_wtls_uv.len = read;
+    uv_write(
+            &conn->write_req,
+            (uv_stream_t*) &conn->client,
+            &conn->buffer_wtls_uv,
+            1,
+            _ch_cn_send_pending_cb);
+    if (conn->flags & CH_CN_SHUTTING_DOWN) {
+        LC(chirp,
+           "Sending %d pending shutdown bytes. ",
+           "ch_connection_t:%p",
+           read,
+           (void*) conn);
+    } else {
+        LC(chirp,
+           "Sending %d pending handshake bytes. ",
+           "ch_connection_t:%p",
+           read,
+           (void*) conn);
+    }
 }
 
 // .. c:function::
 ch_error_t
-ch_rd_init(ch_reader_t* reader, ch_connection_t* conn, ch_chirp_int_t* ichirp)
+ch_cn_shutdown(ch_connection_t* conn, int reason)
 //    :noindex:
 //
-//    see: :c:func:`ch_rd_init`
+//    see: :c:func:`ch_cn_shutdown`
 //
 // .. code-block:: cpp
 //
 {
-    reader->state = CH_RD_START;
-    reader->pool  = ch_alloc(sizeof(*reader->pool));
-    if (reader->pool == NULL) {
-        return CH_ENOMEM;
+    ch_chirp_t* chirp = conn->chirp;
+    if (conn->flags & CH_CN_SHUTTING_DOWN) {
+        EC(chirp, "Shutdown in progress. ", "ch_connection_t:%p", (void*) conn);
+        return CH_IN_PRORESS;
     }
-    return ch_bf_init(reader->pool, conn, ichirp->config.MAX_HANDLERS);
+    LC(chirp, "Shutdown connection. ", "ch_connection_t:%p", (void*) conn);
+    conn->flags |= CH_CN_SHUTTING_DOWN;
+    ch_pr_debounce_connection(conn);
+    ch_chirp_int_t*  ichirp = chirp->_;
+    ch_writer_t*     writer = &conn->writer;
+    ch_remote_t*     remote = conn->remote;
+    ch_connection_t* out;
+    /* In case this conn is in handshake_conns remove it, since we aborted the
+     * handshake */
+    ch_cn_delete(&ichirp->protocol.handshake_conns, conn, &out);
+    /* In case this conn is in old_connections remove it, since we now cleaned
+     * it up*/
+    ch_cn_delete(&ichirp->protocol.old_connections, conn, &out);
+    if (conn->flags & CH_CN_INIT_CLIENT) {
+        uv_read_stop((uv_stream_t*) &conn->client);
+    }
+    conn->remote      = NULL; /* Disassociate from remote */
+    ch_message_t* msg = writer->msg;
+    ch_message_t* wam = NULL;
+    /* In early handshake remote can empty, since we allocate resources after
+     * successful handshake. */
+    if (remote) {
+        /* We finish the message and therefore set wam to NULL. */
+        wam                      = remote->wait_ack_message;
+        remote->wait_ack_message = NULL;
+        /* We could be a connection from old_connections and therefore we do
+         * not want to invalidate an active connection. */
+        if (remote->conn == conn) {
+            remote->conn = NULL;
+        }
+        /* Abort all ack messsages */
+        remote->cntl_msg_queue = NULL;
+    }
+    if (wam != NULL) {
+        wam->_flags |= CH_MSG_FAILURE;
+        ch_chirp_finish_message(chirp, conn, wam, reason);
+    }
+    if (msg != NULL && msg != wam) {
+        msg->_flags |= CH_MSG_FAILURE;
+        ch_chirp_finish_message(chirp, conn, msg, reason);
+    }
+    if (wam == NULL && msg == NULL && remote != NULL) {
+        /* If we have not finished a message we abort one on the remote. */
+        _ch_cn_abort_one_message(remote, reason);
+    }
+    /* finish vs abort - finish: cancel a message on the current connection.
+     * abort: means canceling a message that hasn't been queued yet. If
+     * possible we don't want to cancel a message that hasn't been queued
+     * yet.*/
+    if (conn->flags & CH_CN_ENCRYPTED && conn->flags & CH_CN_INIT_ENCRYPTION) {
+        int tmp_err = SSL_get_verify_result(conn->ssl);
+        if (tmp_err != X509_V_OK) {
+            EC(chirp,
+               "Connection has cert verification error: %d. ",
+               "ch_connection_t:%p",
+               tmp_err,
+               (void*) conn);
+        }
+    }
+    if (ichirp->flags & CH_CHIRP_CLOSING) {
+        conn->flags |= CH_CN_DO_CLOSE_ACCOUTING;
+        ichirp->closing_tasks += 1;
+    }
+    _ch_cn_closing(conn);
+    return CH_SUCCESS;
 }
 
 // .. c:function::
-ssize_t
-ch_rd_read(ch_connection_t* conn, ch_buf* buf, size_t bytes_read, int* stop)
-//    :noindex:
-//
-//    see: :c:func:`ch_rd_read`
-//
-// .. code-block:: cpp
-//
-{
-    *stop = 0;
-
-    /* Bytes handled is used when multiple writes (of the remote) come in a
-     * single read and the reader switches between various states as for
-     * example CH_RD_HANDSHAKE, CH_RD_WAIT or CH_RD_HEADER. */
-    ssize_t bytes_handled = 0;
-    int     cont;
-
-    /* Ignore reads while shutting down */
-    if (conn->flags & CH_CN_SHUTTING_DOWN) {
-        return bytes_read;
-    }
-
-    do {
-        cont          = 0;
-        bytes_handled = _ch_rd_read_step(
-                conn, buf, bytes_read, bytes_handled, stop, &cont);
-        if (*stop || bytes_handled == -1) {
-            return bytes_handled;
-        }
-    } while (bytes_handled < (ssize_t) bytes_read || cont);
-    return bytes_handled;
-}
-
-CH_EXPORT
 void
-ch_chirp_release_message(ch_message_t* msg)
+ch_cn_write(ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback)
 //    :noindex:
 //
-//    see: :c:func:`ch_chirp_release_message`
+//    see: :c:func:`ch_cn_write`
 //
 // .. code-block:: cpp
 //
 {
-    ch_buffer_pool_t* pool = msg->_pool;
-    ch_connection_t*  conn = pool->conn;
-    if (!(msg->_flags & CH_MSG_IS_HANDLER)) {
-        fprintf(stderr,
-                "%s:%d Fatal: Release of non handler message. "
-                "ch_buffer_pool_t:%p\n",
-                __FILE__,
-                __LINE__,
-                (void*) pool);
-        return;
-    }
-    /* If the connection does not exist, it is already shutdown. The user may
-     * release a message after a connection has been shutdown. We use reference
-     * counting in the buffer pool to delay ch_free of the pool. */
-    if (conn && !(conn->flags & CH_CN_SHUTTING_DOWN)) {
-        ch_reader_t* reader = &conn->reader;
-        ch_chirp_t*  chirp  = conn->chirp;
-        if (msg->type & CH_MSG_REQ_ACK) {
-            /* Send the ack to the connection, in case the user changed the
-             * message for his need, which is absolutely ok, and valid use
-             * case. */
-            ch_message_t* ack_msg = &reader->ack_msg;
-            memset(ack_msg, 0, sizeof(*ack_msg));
-            memcpy(ack_msg->identity, msg->identity, CH_ID_SIZE);
-            memcpy(ack_msg->address, conn->address, CH_IP_ADDR_SIZE);
-            ack_msg->ip_protocol = conn->ip_protocol;
-            ack_msg->port        = conn->port;
-            ack_msg->type        = CH_MSG_ACK;
-            ack_msg->header_len  = 0;
-            ack_msg->data_len    = 0;
-            ch_wr_send(chirp, ack_msg, NULL);
-        }
-    }
-    if (msg->_flags & CH_MSG_FREE_DATA) {
-        ch_free(msg->data);
-    }
-    if (msg->_flags & CH_MSG_FREE_HEADER) {
-        ch_free(msg->header);
-    }
-    int pool_is_empty = ch_bf_is_exhausted(pool);
-    ch_bf_release(pool, msg->_handler);
-    if (pool_is_empty && conn) {
-        ch_pr_restart_stream(conn);
-    }
-}
-
-static ssize_t
-_ch_rd_read_buffer(
-        ch_connection_t* conn,
-        ch_reader_t*     reader,
-        ch_message_t*    msg,
-        ch_buf*          src_buf,
-        size_t           to_read,
-        char**           assign_buf,
-        ch_buf*          dest_buf,
-        size_t           dest_buf_size,
-        uint32_t         expected,
-        int              free_flag,
-        ssize_t*         bytes_handled)
-//    :noindex:
-//
-//    see: :c:func:`_ch_rd_read_buffer`
-//
-// .. code-block:: cpp
-//
-{
-    if (reader->bytes_read == 0) {
-        if (expected <= dest_buf_size) {
-            /* Preallocated buf is large enough */
-            *assign_buf = dest_buf;
-        } else {
-            *assign_buf = ch_alloc(expected);
-            if (*assign_buf == NULL) {
-                EC(conn->chirp,
-                   "Could not allocate memory for message. ",
-                   "ch_connection_t:%p",
-                   (void*) conn);
-                ch_cn_shutdown(conn, CH_ENOMEM);
-                return CH_ENOMEM;
-            }
-            msg->_flags |= free_flag;
-        }
-    }
-    if ((to_read + reader->bytes_read) >= expected) {
-        /* We can read everything */
-        size_t reading = expected - reader->bytes_read;
-        memcpy(*assign_buf + reader->bytes_read, src_buf, reading);
-        *bytes_handled += reading;
-        reader->bytes_read = 0; /* Reset partial buffer reads */
-        return CH_SUCCESS;
+    ch_chirp_t* chirp = conn->chirp;
+    A(conn->write_size == 0, "Another connection write is pending");
+    if (conn->flags & CH_CN_ENCRYPTED) {
+        conn->write_callback = callback;
+        conn->write_buffer   = buf;
+        conn->write_size     = size;
+        conn->write_written  = 0;
+#ifdef CH_ENABLE_ASSERTS
+        int pending = BIO_pending(conn->bio_app);
+        A(pending == 0, "There is still pending data in SSL BIO");
+#endif
+        _ch_cn_partial_write(conn);
     } else {
-        /* Only partial read possible */
-        memcpy(*assign_buf + reader->bytes_read, src_buf, to_read);
-        *bytes_handled += to_read;
-        reader->bytes_read += to_read;
-        return CH_MORE;
+        conn->buffer_any_uv = uv_buf_init(buf, size);
+        uv_write(
+                &conn->write_req,
+                (uv_stream_t*) &conn->client,
+                &conn->buffer_any_uv,
+                1,
+                callback);
+        LC(chirp,
+           "Called uv_write with %d bytes. ",
+           "ch_connection_t:%p",
+           (int) size,
+           (void*) conn);
     }
 }
