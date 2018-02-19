@@ -5533,11 +5533,17 @@ _ch_wr_write_timeout_cb(uv_timer_t* handle);
 //
 // .. c:function::
 static void
-_ch_wr_enqeue_noop_if_needed(ch_remote_t* remote);
+_ch_wr_enqeue_probe_if_needed(ch_remote_t* remote);
 //
-//    If remote wasn't use for 3/4 REUSE_TIME, we send a noop message
+//    If remote wasn't use for 3/4 REUSE_TIME, we send a probe message before
+//    the actual message. A probe message will probe the connection before
+//    sending the actual message. If there is a garbage-collection race (the
+//    remote is already closing the connection), the probe would fail and not
+//    the actual message, then the closing of the connection is detected and it
+//    will be reestablished on sending the actual message. Probes are a way of
+//    preventing gc-races.
 //
-//    :param ch_remote_t* remote: Remote to send the noop to.
+//    :param ch_remote_t* remote: Remote to send the probe to.
 
 // Definitions
 // ===========
@@ -5681,7 +5687,11 @@ _ch_wr_connect_cb(uv_connect_t* req, int status)
            taddr.data,
            conn->port,
            (void*) conn);
-        /* Here we join the code called on accept. */
+        /* A connection is created at either _ch_pr_new_connection_cb
+         * (incoming) or _ch_wr_connect (outgoing). After connect
+         * (_ch_wr_connection_cb) both code-paths will continue at
+         * ch_pr_conn_start. From there on incoming and outgoing connections
+         * are handled the same way. */
         ch_pr_conn_start(chirp, conn, &conn->client, 0);
     } else {
         EC(chirp,
@@ -5722,10 +5732,10 @@ _ch_wr_connect_timeout_cb(uv_timer_t* handle)
 
 // .. c:function::
 static void
-_ch_wr_enqeue_noop_if_needed(ch_remote_t* remote)
+_ch_wr_enqeue_probe_if_needed(ch_remote_t* remote)
 //    :noindex:
 //
-//    see: :c:func:`_ch_wr_enqeue_noop_if_needed`
+//    see: :c:func:`_ch_wr_enqeue_probe_if_needed`
 //
 // .. code-block:: cpp
 //
@@ -6089,8 +6099,9 @@ ch_wr_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
     }
     remote->serial += 1;
     msg->serial = remote->serial;
-    /* Remote isn't used for 3/4 REUSE_TIME we send a noop */
-    _ch_wr_enqeue_noop_if_needed(remote);
+    /* Remote isn't used for 3/4 REUSE_TIME we send a probe, before the acutal
+     * message */
+    _ch_wr_enqeue_probe_if_needed(remote);
 
     int queued = 0;
     if (msg->type & CH_MSG_ACK || msg->type & CH_MSG_NOOP) {
@@ -9900,7 +9911,6 @@ ch_chirp_init(
         ch_chirp_set_log_callback(chirp, log_cb);
     }
 
-    srand(((unsigned int) time(NULL)) | ((unsigned int) uv_hrtime()));
     unsigned int i = 0;
     while (i < (sizeof(tmp_conf->IDENTITY) - 1) && tmp_conf->IDENTITY[i] == 0)
         i += 1;
@@ -10253,6 +10263,7 @@ ch_libchirp_init(void)
                 __LINE__);
         return CH_VALUE_ERROR;
     }
+    srand(((unsigned int) time(NULL)) | ((unsigned int) uv_hrtime()));
     _ch_libchirp_initialized = 1;
     uv_mutex_init(&_ch_chirp_init_lock);
 #ifdef CH_ENABLE_ASSERTS
