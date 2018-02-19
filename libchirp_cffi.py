@@ -89,6 +89,32 @@ ch_libchirp_cleanup(void);
 
 ch_error_t
 ch_libchirp_init(void);
+
+#define CH_IP_ADDR_SIZE 16
+#define CH_IP4_ADDR_SIZE 4
+#define CH_ID_SIZE 16
+
+struct ch_config_s {
+    float    REUSE_TIME;
+    float    TIMEOUT;
+    uint16_t PORT;
+    uint8_t  BACKLOG;
+    uint8_t  MAX_HANDLERS;
+    char     ACKNOWLEDGE;
+    char     DISABLE_SIGNALS;
+    uint32_t BUFFER_SIZE;
+    uint32_t MAX_MSG_SIZE;
+    uint8_t  BIND_V6[CH_IP_ADDR_SIZE];
+    uint8_t  BIND_V4[CH_IP4_ADDR_SIZE];
+    uint8_t  IDENTITY[CH_ID_SIZE]; // 16
+    char*    CERT_CHAIN_PEM;
+    char*    DH_PARAMS_PEM;
+    char     DISABLE_ENCRYPTION;
+};
+typedef struct ch_config_s ch_config_t;
+
+void
+ch_chirp_config_init(ch_config_t* config);
 """
 
 ffibuilder.set_source(

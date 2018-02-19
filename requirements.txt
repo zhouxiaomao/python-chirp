@@ -7,3 +7,4 @@ flake8_string_format
 flake8_debugger
 flake8_deprecated
 flake8_docstrings
+hypothesis

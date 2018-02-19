@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 0.2.0-beta amalgamation
+// libchirp 0.2.1-beta amalgamation
 // ================================
 
 // =========
@@ -624,6 +624,19 @@ struct ch_message_s {
 //
 // Either fields may exceed the limit, in which case you have to alloc and set
 // the free_* field.
+
+// .. c:function::
+CH_EXPORT
+void
+ch_msg_free_data(ch_message_t* message);
+//
+//    Frees data attached to the message. This function is mostly intended to
+//    implement bindings, where you can to copy the data into memory provided
+//    by the host language, so it can freely garbage-collect the data.
+//
+//    After calling this the data field will be NULL.
+//
+//    :param ch_message_t* message: Pointer to the message
 
 // .. c:function::
 CH_EXPORT
