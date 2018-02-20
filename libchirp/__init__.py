@@ -16,7 +16,114 @@ new_nozero = ffi.new_allocator(should_clear_after_alloc=False)
 
 
 class Config(object):
-    """Chirp configuration. TODO document."""
+    """Chirp configuration.
+
+    The underlaying C type is annotated in parens. CFFI will raise errors if
+    the values overflow (OverflowError) or don't convert (TypeError).
+
+    .. py:attribute:: REUSE_TIME
+
+       Time until a connection gets garbage collected. Until then the
+       connection will be reused. (float)
+
+    .. py:attribute:: TIMEOUT
+
+       IO related timeout: Sending messages, connecting to remotes. (float)
+
+    .. py:attribute:: PORT
+
+       Port for listening to connections. (uint16_t)
+
+    .. py:attribute:: BACKLOG
+
+       TCP-listen socket backlog. (uint8_t)
+
+    .. py:attribute:: MAX_HANDLERS
+
+       Count of handlers used. Allowed values are values between 1 and 32.
+       The default is 0: Use 16 handlers of ACKNOWLEDGE=0 and 1 handler if
+       ACKNOWLEDGE=1. (uint8_t)
+
+    .. py:attribute:: ACKNOWLEDGE
+
+       Acknowledge messages. Default True. Makes chirp connection-synchronous.
+       See :ref:`modes-of-operation`. Python boolean expected.
+
+    .. py:attribute:: DISABLE_SIGNALS
+
+       By default chirp closes on SIGINT (Ctrl-C) and SIGTERM. Python boolean
+       expected.
+
+    .. py:attribute:: BUFFER_SIZE
+
+       Size of the buffer used for a connection. Defaults to 0, which means
+       use the size requested by libuv. Should not be set below 1024.
+       (uint32_t)
+
+    .. py:attribute:: MAX_MSG_SIZE
+
+       Max message size accepted by chirp. (uint32_t)
+
+       If you are concerned about memory usage set config.MAX_HANDLERS=1 and
+       config.MAX_MSG_SIZE to something small, depending on your use-case. If
+       you do this, a connection will use about:
+
+       conn_buffers_size = config.BUFFER_SIZE +
+          min(config.BUFFER_SIZE, CH_ENC_BUFFER_SIZE) +
+          sizeof(ch_connection_t) +
+          sizeof(ch_message_t) +
+          $(memory allocated by TLS implementation)
+
+       conn_size = conn_buffers_size + config.MAX_MSG_SIZE
+
+       With the default config and SSL conn_buffers_size should be about
+       64k + 16k + 2k + 32k -> 114k. Derived from documentation, no
+       measurement done.
+
+    .. py:attribute:: BIND_V6
+
+       Override IPv6 bind address. String representation expected, parsed by
+       :py:class:`ipaddress.ip_address`.
+
+    .. py:attribute:: BIND_V4
+
+       Override IPv4 bind address. String representation expected, parsed by
+       :py:class:`ipaddress.ip_address`.
+
+    .. py:attribute:: IDENTITY
+
+       Override the chirp-nodes IDENTITY (this chirp instance). By default
+       all chars are 0, which means chirp will generate a IDENTITY. Python
+       bytes of length 16. Everything else will not be accepted by CFFI.
+
+    .. py:attribute:: CERT_CHAIN_PEM
+
+       Path to the verification certificate. Python string.
+
+    .. py:attribute:: DH_PARAMS_PEM
+
+       Path to the file containing DH parameters. Python string.
+
+    .. py:attribute:: DISABLE_ENCRYPTION
+
+       Disables encryption. Only use if you know what you are doing.
+       Connections to "127.0.0.1" and "::1" aren't encrypted anyways. Python
+       boolean expected.
+
+    .. py:attribute:: AUTO_RELEASE
+
+       By default chirp will release the message automatically when the
+       handler-callback returns. Python boolean.
+
+       In synchronous mode the remote will only send the next message if the
+       current message has been released.
+
+       In asynchronous mode when all handlers are used up and the TCP-buffers
+       are filled up, the remote will eventually not be able to send more
+       messages. After TIMEOUT seconds messages start to time out.
+
+       See :ref:`modes-of-operation`
+    """
 
     _ips     = ('BIND_V4', 'BIND_V6')
     _bools   = ('ACKNOWLEDGE', 'DISABLE_SIGNALS', 'DISABLE_ENCRYPTION')
