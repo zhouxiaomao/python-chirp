@@ -28,7 +28,8 @@ class Config(object):
 
     .. py:attribute:: TIMEOUT
 
-       IO related timeout: Sending messages, connecting to remotes. (float)
+       IO related timeout in seconds: Sending messages, connecting to remotes.
+       (float)
 
     .. py:attribute:: PORT
 
@@ -37,6 +38,15 @@ class Config(object):
     .. py:attribute:: BACKLOG
 
        TCP-listen socket backlog. (uint8_t)
+
+       From man 2 listen:
+
+           The backlog argument defines the maximum length to which the queue
+           of pending connections for sockfd may grow.  If a connection request
+           arrives when the queue is full, the client may receive an error with
+           an indication of ECONNREFUSED or, if the underlying protocol
+           supports retransmission, the request may be ignored so that a later
+           reattempt at connection succeeds.
 
     .. py:attribute:: MAX_HANDLERS
 
@@ -52,7 +62,7 @@ class Config(object):
     .. py:attribute:: DISABLE_SIGNALS
 
        By default chirp closes on SIGINT (Ctrl-C) and SIGTERM. Python boolean
-       expected.
+       expected. Defaults to False.
 
     .. py:attribute:: BUFFER_SIZE
 
@@ -72,7 +82,7 @@ class Config(object):
           min(config.BUFFER_SIZE, CH_ENC_BUFFER_SIZE) +
           sizeof(ch_connection_t) +
           sizeof(ch_message_t) +
-          $(memory allocated by TLS implementation)
+          (memory allocated by TLS implementation)
 
        conn_size = conn_buffers_size + config.MAX_MSG_SIZE
 
@@ -93,8 +103,8 @@ class Config(object):
     .. py:attribute:: IDENTITY
 
        Override the chirp-nodes IDENTITY (this chirp instance). By default
-       all chars are 0, which means chirp will generate a IDENTITY. Python
-       bytes of length 16. Everything else will not be accepted by CFFI.
+       chirp will generate a IDENTITY. Python bytes of length 16. Everything
+       else will not be accepted by CFFI.
 
     .. py:attribute:: CERT_CHAIN_PEM
 
@@ -108,14 +118,14 @@ class Config(object):
 
        Disables encryption. Only use if you know what you are doing.
        Connections to "127.0.0.1" and "::1" aren't encrypted anyways. Python
-       boolean expected.
+       boolean expected. Defaults to False.
 
     .. py:attribute:: AUTO_RELEASE
 
        By default chirp will release the message automatically when the
        handler-callback returns. Python boolean.
 
-       In synchronous mode the remote will only send the next message if the
+       In synchronous mode the remote will only send the next message when the
        current message has been released.
 
        In asynchronous mode when all handlers are used up and the TCP-buffers
@@ -171,12 +181,13 @@ class Config(object):
 
 
 class Message(object):
-    """Chirp message. TODO document.
+    """Chirp message. To answer to message just replace the data and send it.
 
     .. note::
 
-       The properties of the message use asserts to check if the value has the
-       correct type, length, range. You can disable these with python -O.
+       The underlaying C type is annotated in parens. The properties of the
+       message use asserts to check if the value has the correct type, length,
+       range. You can disable these with python -O.
     """
 
     __slots__ = (
@@ -255,70 +266,134 @@ class Message(object):
 
     @property
     def identity(self):
-        """Get identity."""
+        """Get identify the message and answers to it. (uint8_t[16]).
+
+        The identity can be used to find answers to a message, since replying
+        to message won't change the identity.
+
+        If you need to uniquely identify the message, use the identity/serial
+        pair, since the serial will change when replying to messages.
+
+        :rtype: bytes
+        """
         return self._identity
 
     @property
     def serial(self):
-        """Get serial."""
+        """Get the serial number of the message. (uint32_t).
+
+        Increases monotonic. Be aware of overflows, if want to use it for
+        ordering use the delta: serialA - serialB.
+
+        :rtype: int
+        """
         return self._serial
 
     @property
     def header(self):
-        """Get header."""
+        """Get the header used by upper-layer protocols.
+
+        Users should not use it, except if you know what you are doing.
+
+        :rtype: bytes
+        """
         return self._header
 
     @header.setter
     def header(self, value):
-        """Set header."""
+        """Set the header used by upper-layer protocols.
+
+        :param bytes value: The value
+        """
         assert isinstance(value, bytes)
         self._header = value
 
     @property
     def data(self):
-        """Get data."""
+        """Get the data of the message.
+
+        :rtype: bytes
+        """
         return self._data
 
     @data.setter
     def data(self, value):
-        """Set data."""
+        """Set the data of the message.
+
+        :param bytes value: The value
+        """
         assert isinstance(value, bytes)
         self._data = value
 
     @property
     def address(self):
-        """Get address."""
+        """Get address.
+
+        If the message was received: The address of the remote the message was
+        received from.
+
+        If the message will be sent: The address to send the message to.
+
+        This allows to reply to messages just by replacing :py:meth:`data`.
+
+        :return: String representation generated by
+                 py:class:`ipaddress.ip_address`.
+        :rtype: string
+        """
         return self._address.compressed
 
     @address.setter
     def address(self, value):
-        """Set address."""
+        """Set address.
+
+        :param str value: String representation expected, parsed by
+                            :py:class:`ipaddress.ip_address`.
+        """
         self._address = ip_address(value)
 
     @property
     def port(self):
-        """Get port."""
+        """Get port. (uint16_t).
+
+        If the message was received: The port of the remote the message was
+        received from.
+
+        If the message will be sent: The port to send the message to.
+
+        This allows to reply to messages just by replacing :py:meth:`data`.
+
+        :rtype: int
+        """
         return self._port
 
     @port.setter
     def port(self, value):
-        """Set port."""
+        """Set port.
+
+        :param int value: The value
+        """
         assert value >= 0 and value <= 2**16
         self._port = value
 
     @property
+    def remote_identity(self):
+        """Detect the remote instance. (uint8_t[16]).
+
+        By default a node's identity will change on each start of chirp. If
+        multiple peers share state, a change in the remote_identity should
+        trigger a reset of the state. Simply use the remote_identity as key in
+        a dictionary of shared state.
+        """
+        return self._remote_identity
+
+    @property
     def has_recv_handler(self):
-        """TODO document."""
+        """TODO Wait for chirp update with message-slots."""
         msg = self._ensure_message()
         return lib.ch_msg_has_recv_handler(msg) == 1
 
-    @property
-    def remote_identity(self):
-        """Get remote_identity."""
-        return self._remote_identity
-
     def release(self):
-        """TODO document."""
+        """TODO Wait for chirp update with message-slots."""
         if self.has_recv_handler:
             # TODO test
             lib.ch_chirp_release_message(self._msg)
