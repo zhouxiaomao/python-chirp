@@ -1,17 +1,25 @@
 #!/usr/bin/env python
 """Setup of libchirp."""
 
+import codecs
 import sys
 import os
 from os import path
 from setuptools import setup, find_packages
 
-os.environ["LICHIRP_HERE"] = path.abspath(path.dirname(__file__))
+here = path.abspath(path.dirname(__file__))
+os.environ["LICHIRP_HERE"] = here
+
+__version__  = None
+version_file = path.join(here, "libchirp", "version.py")
+with codecs.open(version_file, encoding="UTF-8") as f:
+    code = compile(f.read(), version_file, 'exec')
+    exec(code)
 
 try:
     setup(
         name="libchirp",
-        version="0.2.0b0",
+        version=__version__,
         description="Message-passing for everyone.",
         long_description=open("README.rst", "rt").read(),
         url="https://github.com/concretecloud/python-chirp",

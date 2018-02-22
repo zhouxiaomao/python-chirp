@@ -4,8 +4,6 @@ python-chirp
 
 Message-passing for everyone
 
-.. TODO Add real readthedocs
-
 |travis| |rtd| |mpl| |works|
 
 .. |travis|  image:: https://travis-ci.org/concretecloud/python-chirp.svg?branch=master
@@ -19,7 +17,18 @@ Message-passing for everyone
 
 `Read the Docs`_
 
-.. _`Read the Docs`: http://1042.ch/chirp/
+.. _`Read the Docs`: https://docs.adfinis-sygroup.ch/public/chirp-python
+
+.. raw:: html
+
+    <img alt="chirp"
+    src="https://raw.githubusercontent.com/concretecloud/chirp/master/doc/_static/chirp.png"
+    width="33%">
+
+Supported by |adsy|
+
+.. |adsy| image:: https://1042.ch/ganwell/adsy-logo.svg
+   :target: https://adfinis-sygroup.ch/
 
 BETA-RELEASE: 0.2.0
 ===================

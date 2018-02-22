@@ -12,7 +12,9 @@ assert lib.ch_libchirp_init() == lib.CH_SUCCESS
 atexit.register(lambda: lib.ch_libchirp_cleanup())
 # Since the init functions of libchirp will zero the memory, we need an
 # allocator that doesn't zero the memory.
-new_nozero = ffi.new_allocator(should_clear_after_alloc=False)
+_new_nozero = ffi.new_allocator(should_clear_after_alloc=False)
+
+__all__ = ('Config', 'Message')
 
 
 class Config(object):
@@ -142,7 +144,7 @@ class Config(object):
     def __init__(self):
         dself = self.__dict__
         dself['AUTO_RELEASE'] = True
-        conf = new_nozero("ch_config_t *")
+        conf = _new_nozero("ch_config_t *")
         dself['_conf'] = conf
         lib.ch_chirp_config_init(conf)
 
@@ -213,7 +215,7 @@ class Message(object):
         """Ensure that a message exists."""
         msg = self._msg
         if not msg:
-            msg = new_nozero("ch_message_t *")
+            msg = _new_nozero("ch_message_t *")
             lib.ch_msg_init(msg)
             self._msg = msg
         return msg
