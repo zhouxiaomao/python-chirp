@@ -68,6 +68,8 @@ with open("libchirp.c") as f:
     _source = f.read()
 
 _header = """
+typedef char ch_buf;
+
 typedef enum {
     CH_SUCCESS        = 0,
     CH_VALUE_ERROR    = 1,
@@ -105,6 +107,26 @@ ch_libchirp_init(void);
 #define CH_IP4_ADDR_SIZE 4
 #define CH_ID_SIZE 16
 
+// Forward decls
+
+struct ch_chirp_s;
+typedef struct ch_chirp_s ch_chirp_t;
+struct ch_config_s;
+typedef struct ch_config_s ch_config_t;
+struct ch_message_s;
+typedef struct ch_message_s ch_message_t;
+
+// Callbacks
+
+typedef void (*ch_done_cb_t)(ch_chirp_t* chirp);
+typedef void (*ch_log_cb_t)(char msg[], char error);
+typedef void (*ch_send_cb_t)(
+        ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
+typedef void (*ch_recv_cb_t)(ch_chirp_t* chirp, ch_message_t* msg);
+typedef void (*ch_start_cb_t)(ch_chirp_t* chirp);
+
+// Config
+
 struct ch_config_s {
     float    REUSE_TIME;
     float    TIMEOUT;
@@ -122,10 +144,46 @@ struct ch_config_s {
     char*    DH_PARAMS_PEM;
     char     DISABLE_ENCRYPTION;
 };
-typedef struct ch_config_s ch_config_t;
 
 void
 ch_chirp_config_init(ch_config_t* config);
+
+// Message
+
+struct ch_message_s {
+    // Network data, has to be sent in network order
+    uint8_t  identity[CH_ID_SIZE];
+    uint32_t serial;
+    uint8_t  type;
+    uint16_t header_len;
+    uint32_t data_len;
+    // These fields follow the message in this order (see *_len above)
+    ch_buf* header;
+    ch_buf* data;
+    // Local       only data
+    uint8_t       ip_protocol;
+    uint8_t       address[CH_IP_ADDR_SIZE]; // 16
+    int32_t       port;
+    uint8_t       remote_identity[CH_ID_SIZE];
+    void*         user_data;
+    uint8_t       _flags;
+    ch_send_cb_t  _send_cb;
+    uint8_t       _handler;
+    void*         _pool;
+    ch_message_t* _next;
+};
+
+void
+ch_msg_free_data(ch_message_t* message);
+
+ch_error_t
+ch_msg_init(ch_message_t* message);
+
+int
+ch_msg_has_recv_handler(ch_message_t* message);
+
+void
+ch_chirp_release_message(ch_message_t* msg);
 """
 
 ffibuilder.set_source(
