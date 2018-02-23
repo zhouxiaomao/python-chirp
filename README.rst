@@ -9,7 +9,7 @@ Message-passing for everyone
 .. |travis|  image:: https://travis-ci.org/concretecloud/python-chirp.svg?branch=master
    :target: https://travis-ci.org/concretecloud/python-chirp
 .. |rtd| image:: https://1042.ch/ganwell/docs-master.svg
-   :target: https://1042.ch/chirp/
+   :target: https://docs.adfinis-sygroup.ch/public/python-chirp
 .. |mpl| image:: https://img.shields.io/badge/license-MPL%202.0-blue.svg
    :target: http://mozilla.org/MPL/2.0/
 .. |works| image:: https://img.shields.io/badge/hypothesis-works-blue.svg
@@ -17,7 +17,7 @@ Message-passing for everyone
 
 `Read the Docs`_
 
-.. _`Read the Docs`: https://docs.adfinis-sygroup.ch/public/chirp-python
+.. _`Read the Docs`: https://docs.adfinis-sygroup.ch/public/python-chirp
 
 .. raw:: html
 
@@ -30,7 +30,7 @@ Supported by |adsy|
 .. |adsy| image:: https://1042.ch/ganwell/adsy-logo.svg
    :target: https://adfinis-sygroup.ch/
 
-BETA-RELEASE: 0.2.0
+BETA-RELEASE: 1.0.0
 ===================
 
 Features

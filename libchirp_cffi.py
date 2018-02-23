@@ -1,9 +1,9 @@
 """cffi for libchirp binding."""
-import sys
+from cffi import FFI
 import os
 from os import path
 import platform
-from cffi import FFI
+import sys
 
 here = os.environ.get("LICHIRP_HERE") or path.abspath(path.dirname(__file__))
 static = os.environ.get("LIBCHIRP_STATIC") == "True"
