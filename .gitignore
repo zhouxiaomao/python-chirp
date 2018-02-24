@@ -9,3 +9,4 @@ __pycache__
 /libchirp.egg-info/
 /.eggs
 /.hypothesis/
+/doc/_build
