@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 0.2.1-beta amalgamation
+// libchirp 1.0.0-beta amalgamation
 // ================================
 
 // =========
@@ -517,12 +517,18 @@ typedef void* (*ch_realloc_cb_t)(void* buf, size_t new_size);
 //
 //    .. c:member:: uint8_t[16] identity
 //
-//       The identity of the message. Never change the identity of message.
+//       Identify the message and answers to it. Never change the identity of
+//       message. The identity can be used to find answers to a message, since
+//       replying to message won't change the identity.
+//
+//       If you need to uniquely identify the message, use the identity/serial
+//       pair, since the serial will change when replying to messages.
 //
 //    .. c:member:: uint32_t serial
 //
-//       The serial number of the message. Represents to order they are sent.
-//       Be aware of overflows.
+//       The serial number of the message. Increases monotonic. Be aware of
+//       overflows, if want to use it for ordering use the delta: serialA -
+//       serialB.
 //
 //    .. c:member:: uint8_t type
 //
@@ -538,9 +544,9 @@ typedef void* (*ch_realloc_cb_t)(void* buf, size_t new_size);
 //
 //    .. c:member:: ch_buf* header
 //
-//       Header of the message defined as (char-) buffer. Used by upper-layer
-//       protocols. Users should not use it, except you know what you are
-//       doing.
+//       Header used by upper-layer protocols. Users should not use it, except
+//       if you know what you are doing. ch_buf* is an alias for char* and
+//       denotes to binary buffer: the length has to be supplied (header_len)
 //
 //    .. c:member:: ch_buf* data
 //
@@ -550,25 +556,54 @@ typedef void* (*ch_realloc_cb_t)(void* buf, size_t new_size);
 //
 //    .. c:member:: uint8_t ip_protocol
 //
-//       The IP protocol which was / shall be used for this message. This may
-//       either be IPv4 or IPv6. See :c:type:`ch_ip_protocol_t`.
+//       The IP protocol which was / shall be used for this message.
+//
+//       If the message was received: The protocol of the remote the message
+//       was received from.
+//
+//       If the message will be sent: The protocol to send the message to.
+//
+//       This allows to reply to messages just by replacing the data
+//       :c:func:`ch_msg_set_data`.
+//
+//       This may either be IPv4 or IPv6. See :c:type:`ch_ip_protocol_t`.
+//       Please use :c:func:`ch_msg_set_address` to set this.
 //
 //    .. c:member:: uint8_t[16] address
 //
-//       IPv4/6 address of the sender if the message was received. IPv4/6
-//       address of the recipient if the message is going to be sent.
+//       IPv4/6 address.
+//
+//       If the message was received: The address of the remote the message was
+//       received from.
+//
+//       If the message will be sent: The address to send the message to.
+//
+//       This allows to reply to messages just by replacing the data
+//       :c:func:`ch_msg_set_data`.
+//
+//       Please use :c:func:`ch_msg_set_address` to set and
+//       :c:func:`ch_msg_get_address` to get the address.
 //
 //    .. c:member:: int32_t port
 //
-//       The port that the will be used reading/writing a message over a
-//       connection.
+//       The port.
+//
+//       If the message was received: The port of the remote the message was
+//       received from.
+//
+//       If the message will be sent: The port to send the message to.
+//
+//       This allows to reply to messages just by replacing the data
+//       :c:func:`ch_msg_set_data`.
+//
+//       Please use :c:func:`ch_msg_set_address` to set the port.
 //
 //    .. c:member:: uint8_t remote_identity[CH_ID_SIZE]
 //
-//       Used to detect the remote instance. By default the remote_identity
-//       will change on each start of chirp. If multiple peers share state,
-//       a change in the remote_identity should trigger a reset of the state.
-//       Simply use the remote_identity as key in a dictionary of shared state.
+//       Detect the remote instance. By default a node's identity will change
+//       on each start of chirp. If multiple peers share state, a change in the
+//       remote_identity should trigger a reset of the state. Simply use the
+//       remote_identity as key in a dictionary of shared state.
 //
 //    .. c:member:: ch_chirp_t* chirp
 //
@@ -599,8 +634,9 @@ struct ch_message_s {
     void*         user_data;
     uint8_t       _flags;
     ch_send_cb_t  _send_cb;
-    uint8_t       _handler;
+    uint8_t       _slot;
     void*         _pool;
+    void*         _ssl_context;
     ch_message_t* _next;
 };
 
@@ -619,8 +655,8 @@ struct ch_message_s {
 //        recv_exactly(buffer=msg.data, msg.data_len)
 //    }
 //
-// * Please use MAX_HANDLERS preallocated buffers of size 32 for header
-// * Please use MAX_HANDLERS preallocated buffers of size 512 for data
+// * Please use MAX_SLOTS preallocated buffers of size 32 for header
+// * Please use MAX_SLOTS preallocated buffers of size 512 for data
 //
 // Either fields may exceed the limit, in which case you have to alloc and set
 // the free_* field.
@@ -683,10 +719,10 @@ ch_msg_get_remote_identity(ch_message_t* message);
 // .. c:function::
 CH_EXPORT
 int
-ch_msg_has_recv_handler(ch_message_t* message);
+ch_msg_has_slot(ch_message_t* message);
 //
-//    Returns 1 if the message has a recv handler and therefore you have to
-//    call ch_chirp_release_message.
+//    Returns 1 if the message has a slot and therefore you have to call
+//    ch_chirp_release_msg_slot.
 //
 //    :param ch_message_t* message: Pointer to the message
 //
@@ -838,12 +874,13 @@ ch_run(uv_loop_t* loop);
 //
 //    .. c:member:: float REUSE_TIME
 //
-//       Time until a connection gets garbage collected. After this the
+//       Time until a connection gets garbage collected. Until then the
 //       connection will be reused.
 //
 //    .. c:member:: float TIMEOUT
 //
-//       General IO related timeout.
+//       IO related timeout in seconds: Sending messages, connecting to
+//       remotes.
 //
 //    .. c:member:: uint16_t PORT
 //
@@ -853,11 +890,11 @@ ch_run(uv_loop_t* loop);
 //
 //       TCP-listen socket backlog.
 //
-//    .. c:member:: uint8_t MAX_HANDLERS
+//    .. c:member:: uint8_t MAX_SLOTS
 //
-//       Count of handlers used. Allowed values are values between 1 and 32.
-//       The default is 0: Use 16 handlers of ACKNOWLEDGE=0 and 1 handler if
-//       ACKNOWLEDGE=1.
+//       The count of message-slots used. Allowed values are values between 1
+//       and 32. The default is 0: Use 16 slots if ACKNOWLEDGE=0 and 1
+//       slot if ACKNOWLEDGE=1.
 //
 //    .. c:member:: char ACKNOWLEDGE
 //
@@ -866,7 +903,7 @@ ch_run(uv_loop_t* loop);
 //
 //    .. c:member:: char DISABLE_SIGNALS
 //
-//       By default chirp closes on SIGINT (Ctrl-C) and SIGTERM.
+//       By default chirp closes on SIGINT (Ctrl-C) and SIGTERM. Defaults to 0.
 //
 //    .. c:member:: uint32_t BUFFER_SIZE
 //
@@ -876,7 +913,7 @@ ch_run(uv_loop_t* loop);
 //    .. c:member:: uint32_t MAX_MSG_SIZE
 //
 //       Max message size accepted by chirp. If you are concerned about memory
-//       usage set config.MAX_HANDLERS=1 and config.MAX_MSG_SIZE to something
+//       usage set config.MAX_SLOTS=1 and config.MAX_MSG_SIZE to something
 //       small, depending on your use-case. If you do this, a connection will
 //       use about:
 //
@@ -884,11 +921,11 @@ ch_run(uv_loop_t* loop);
 //          min(config.BUFFER_SIZE, CH_ENC_BUFFER_SIZE) +
 //          sizeof(ch_connection_t) +
 //          sizeof(ch_message_t) +
-//          $(memory allocated by TLS implementation)
+//          (memory allocated by TLS implementation)
 //
 //       conn_size = conn_buffers_size + config.MAX_MSG_SIZE
 //
-//       With the default config and LibreSSL conn_buffers_size should be about
+//       With the default config and SSL conn_buffers_size should be about
 //       64k + 16k + 2k + 32k -> 114k. Derived from documentation, no
 //       measurement done.
 //
@@ -902,21 +939,22 @@ ch_run(uv_loop_t* loop);
 //
 //    .. c:member:: uint8_t[16] IDENTITY
 //
-//       Override the IDENTITY. By default all chars are 0, which means chirp
-//       will generate a IDENTITY.
+//       Override the chirp-nodes IDENTITY (this chirp instance). By default
+//       all chars are 0, which means chirp will generate a IDENTITY.
 //
 //    .. c:member:: char* CERT_CHAIN_PEM
 //
-//       Holds the verification certificate.
+//       Path to the verification certificate.
 //
 //    .. c:member:: char* DH_PARAMS_PEM
 //
-//       Holds the path to the file containing DH parameters.
+//       Path to the file containing DH parameters.
 //
 //    .. c:member:: char DISABLE_ENCRYPTION
 //
 //       Disables encryption. Only use if you know what you are doing.
 //       Connections to "127.0.0.1" and "::1" aren't encrypted anyways.
+//       Defaults to 0.
 //
 // .. code-block:: cpp
 //
@@ -925,7 +963,7 @@ struct ch_config_s {
     float    TIMEOUT;
     uint16_t PORT;
     uint8_t  BACKLOG;
-    uint8_t  MAX_HANDLERS;
+    uint8_t  MAX_SLOTS;
     char     ACKNOWLEDGE;
     char     DISABLE_SIGNALS;
     uint32_t BUFFER_SIZE;
@@ -1058,14 +1096,16 @@ ch_chirp_init(
 // .. c:function::
 CH_EXPORT
 void
-ch_chirp_release_message(ch_message_t* msg);
+ch_chirp_release_msg_slot(ch_message_t* msg);
 //
-//    Release the internal receive handler and acknowledge the message. Must be
-//    called when the message isn't needed anymore. IMPORTANT: Neglecting to
-//    release the handler will lockup chirp. Never ever change a messages
-//    identity.
+//    Release the internal message-slot and acknowledge the message (if
+//    ACKNOWLEDGE=1). Must be called when the message isn't needed anymore,
+//    afterwards the message may NOT be used anymore.
 //
-//    :param ch_message_t* msg: The message representing the handler.
+//    IMPORTANT: Neglecting to release the slot will lockup chirp. Never ever
+//    change a messages identity.
+//
+//    :param ch_message_t* msg: The message representing the slot.
 //
 
 // .. c:function::

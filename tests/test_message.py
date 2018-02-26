@@ -15,7 +15,7 @@ def test_init(message):
     assert message.address == "0.0.0.0"
     assert message.port == 0
     assert message.remote_identity == b'\0' * lib.CH_ID_SIZE
-    assert message.has_recv_handler is False
+    assert message.has_slot is False
 
 
 @given(
@@ -45,10 +45,10 @@ def test_msg_roundtrip(message, header, data, ip, port):
 
 def test_release_does_nothing(message):
     """test_release_does_nothing."""
-    # With the message API only we can't test release(), so we assure that it
-    # at least does nothing.
+    # With the message API only we can't test release_slot(), so we assure that
+    # it at least does nothing.
     id_msg = id(message._msg)
-    message.release()
+    message.release_slot()
     assert id_msg == id(message._msg)
 
 

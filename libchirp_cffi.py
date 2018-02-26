@@ -132,7 +132,7 @@ struct ch_config_s {
     float    TIMEOUT;
     uint16_t PORT;
     uint8_t  BACKLOG;
-    uint8_t  MAX_HANDLERS;
+    uint8_t  MAX_SLOTS;
     char     ACKNOWLEDGE;
     char     DISABLE_SIGNALS;
     uint32_t BUFFER_SIZE;
@@ -168,8 +168,9 @@ struct ch_message_s {
     void*         user_data;
     uint8_t       _flags;
     ch_send_cb_t  _send_cb;
-    uint8_t       _handler;
+    uint8_t       _slot;
     void*         _pool;
+    void*         _ssl_context;
     ch_message_t* _next;
 };
 
@@ -180,10 +181,10 @@ ch_error_t
 ch_msg_init(ch_message_t* message);
 
 int
-ch_msg_has_recv_handler(ch_message_t* message);
+ch_msg_has_slot(ch_message_t* message);
 
 void
-ch_chirp_release_message(ch_message_t* msg);
+ch_chirp_release_msg_slot(ch_message_t* msg);
 """
 
 ffibuilder.set_source(

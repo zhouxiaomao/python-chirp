@@ -50,10 +50,10 @@ class Config(object):
            supports retransmission, the request may be ignored so that a later
            reattempt at connection succeeds.
 
-    .. py:attribute:: MAX_HANDLERS
+    .. py:attribute:: MAX_SLOTS
 
-       Count of handlers used. Allowed values are values between 1 and 32.
-       The default is 0: Use 16 handlers of ACKNOWLEDGE=0 and 1 handler if
+       Count of message-slots used. Allowed values are values between 1 and 32.
+       The default is 0: Use 16 slots of ACKNOWLEDGE=0 and 1 slot if
        ACKNOWLEDGE=1. (uint8_t)
 
     .. py:attribute:: ACKNOWLEDGE
@@ -76,7 +76,7 @@ class Config(object):
 
        Max message size accepted by chirp. (uint32_t)
 
-       If you are concerned about memory usage set config.MAX_HANDLERS=1 and
+       If you are concerned about memory usage set config.MAX_SLOTS=1 and
        config.MAX_MSG_SIZE to something small, depending on your use-case. If
        you do this, a connection will use about:
 
@@ -124,13 +124,13 @@ class Config(object):
 
     .. py:attribute:: AUTO_RELEASE
 
-       By default chirp will release the message automatically when the
+       By default chirp will release the message-slot automatically when the
        handler-callback returns. Python boolean.
 
        In synchronous mode the remote will only send the next message when the
        current message has been released.
 
-       In asynchronous mode when all handlers are used up and the TCP-buffers
+       In asynchronous mode when all slots are used up and the TCP-buffers
        are filled up, the remote will eventually not be able to send more
        messages. After TIMEOUT seconds messages start to time out.
 
@@ -271,10 +271,11 @@ class Message(object):
         """Get identify the message and answers to it. (uint8_t[16]).
 
         The identity can be used to find answers to a message, since replying
-        to message won't change the identity.
+        to the message won't change the identity.
 
         If you need to uniquely identify the message, use the identity/serial
         pair, since the serial will change when replying to messages.
+        (read-only)
 
         :rtype: bytes
         """
@@ -285,7 +286,7 @@ class Message(object):
         """Get the serial number of the message. (uint32_t).
 
         Increases monotonic. Be aware of overflows, if want to use it for
-        ordering use the delta: serialA - serialB.
+        ordering use the delta: serialA - serialB. (read-only)
 
         :rtype: int
         """
@@ -384,19 +385,31 @@ class Message(object):
         By default a node's identity will change on each start of chirp. If
         multiple peers share state, a change in the remote_identity should
         trigger a reset of the state. Simply use the remote_identity as key in
-        a dictionary of shared state.
+        a dictionary of shared state. (read-only)
         """
         return self._remote_identity
 
     @property
-    def has_recv_handler(self):
-        """TODO Wait for chirp update with message-slots."""
-        msg = self._ensure_message()
-        return lib.ch_msg_has_recv_handler(msg) == 1
+    def has_slot(self):
+        """Return if the message has a slot.
 
-    def release(self):
-        """TODO Wait for chirp update with message-slots."""
-        if self.has_recv_handler:
+        If :py:attr:`libchirp.Config.AUTO_RELEASE` is False, you have to call
+        :py:meth:`release_slot`
+        """
+        msg = self._ensure_message()
+        return lib.ch_msg_has_slot(msg) == 1
+
+    def release_slot(self):
+        """Release the internal message-slot.
+
+        Will also acknowledge the message, if
+        :py:attr:`libchirp.Config.ACKNOWLEDGE` is True.
+
+        You do not have to call this if :py:attr:`libchirp.Config.AUTO_RELEASE`
+        is True. The message will automatically released when the
+        message-handler (your code) returns.
+        """
+        if self.has_slot:
             # TODO test
             lib.ch_chirp_release_message(self._msg)
             self._msg = None

@@ -5,7 +5,7 @@
 //
 // .. code-block:: cpp
 //
-#define CH_VERSION "0.2.1-beta"
+#define CH_VERSION "1.0.0-beta"
 
 // Buffer-size when allocating communication buffers, can be overridden in
 // :c:type:`ch_config_t`.
