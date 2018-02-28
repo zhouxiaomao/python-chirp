@@ -1,8 +1,10 @@
 """Main module of libchirp, containing common and low level bindings."""
 import atexit
 from ipaddress import ip_address, IPv6Address
+import logging
 import sys
 import socket
+import threading
 
 from _libchirp_cffi import ffi, lib  # noqa
 
@@ -13,6 +15,7 @@ atexit.register(lambda: lib.ch_libchirp_cleanup())
 # Since the init functions of libchirp will zero the memory, we need an
 # allocator that doesn't zero the memory.
 _new_nozero = ffi.new_allocator(should_clear_after_alloc=False)
+_l = logging.getLogger("libchirp")
 
 __all__ = ('Config', 'Message')
 
@@ -144,7 +147,7 @@ class Config(object):
     def __init__(self):
         dself = self.__dict__
         dself['AUTO_RELEASE'] = True
-        conf = _new_nozero("ch_config_t *")
+        conf = _new_nozero("ch_config_t*")
         dself['_conf'] = conf
         lib.ch_chirp_config_init(conf)
 
@@ -215,7 +218,7 @@ class Message(object):
         """Ensure that a message exists."""
         msg = self._msg
         if not msg:
-            msg = _new_nozero("ch_message_t *")
+            msg = _new_nozero("ch_message_t*")
             lib.ch_msg_init(msg)
             self._msg = msg
         return msg
@@ -413,3 +416,101 @@ class Message(object):
             # TODO test
             lib.ch_chirp_release_message(self._msg)
             self._msg = None
+
+
+@ffi.def_extern()
+def _loop_async_cb(async_t):
+    """Libuv calls this in the thread context of the event-loop.
+
+    Used to execute code in the event-loops thread.
+    """
+    self = ffi.from_handle(async_t.data)
+    with self._lock:
+        soon_list = self._soon_list
+        self._soon_list = []
+    for func, args, kwargs in soon_list:
+        func(*args, **kwargs)
+
+
+@ffi.def_extern()
+def _loop_close_cb(handle_t):
+    """Libuv calls this when the async_t handle is closed."""
+    self = ffi.from_handle(handle_t.data)
+    with self._lock:
+        loop = self._loop_t
+    lib.uv_stop(loop)
+
+
+class Loop(object):
+    """Initialize and run a libuv event-loop."""
+
+    def __init__(self):
+        self._stopped = False
+        self._started = False
+        self._soon_list = []
+        self._lock         = threading.Lock()
+        self._data         = ffi.new_handle(self)
+        self._loop_t       = _new_nozero("uv_loop_t*")
+        self._async_t      = _new_nozero("uv_async_t*")
+        self._async_t.data = self._data
+        lib.uv_loop_init(self._loop_t)
+        lib.uv_async_init(self._loop_t, self._async_t, lib._loop_async_cb)
+
+    def _target(self):
+        """Run the event-loop."""
+        with self._lock:
+            loop_t = self._loop_t
+        _l.debug("libuv event-loop started")
+        if lib.uv_run(loop_t, lib.UV_RUN_DEFAULT) != 0:
+            _l.warning("Cannot close all uv-handles/requests.")
+            if lib.uv_run(loop_t, lib.UV_RUN_NOWAIT) != 0:
+                # No we have a serious problem
+                _l.error("Cannot close all uv-handles/requests.")
+
+    def call_soon(self, func, *args, **kwargs):
+        """Call function in event-loop thread.
+
+        The function will be executed asynchronous. If you need a result pass a
+        py:class:`concurrent.futures.Future` to the function.
+
+        For example:
+
+        .. code:: python
+
+           loop.call_soon(print, "hello")
+        """
+        with self._lock:
+            self._soon_list.append((func, args, kwargs))
+            async_t = self._async_t
+        lib.uv_async_send(async_t)
+
+    def run(self):
+        """Run the event loop."""
+        if not self._started:
+            self._started = True
+            self._thread = threading.Thread(target=self._target)
+            self._thread.start()
+        elif self._stopped:
+            # We are silent about multiple run/stop, but if user expects it is
+            # possible to restart, we raise an error.
+            raise RuntimeError("Cannot restart loop")
+
+    @property
+    def running(self):
+        """Return True if event-loop is running."""
+        return self._started and not self._stopped
+
+    def stop(self):
+        """Stop the event-loop."""
+        def stop_libuv(self):
+            with self._lock:
+                async_t = self._async_t
+            lib.uv_close(
+                ffi.cast("uv_handle_t*", async_t),
+                lib._loop_close_cb
+            )
+        if self._started and not self._stopped:
+            self._stopped = True
+            self.call_soon(stop_libuv, self)
+            self._thread.join()
+            _l.debug("libuv event-loop stopped")

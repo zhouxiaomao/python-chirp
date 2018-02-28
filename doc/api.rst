@@ -15,6 +15,14 @@ Config
     :undoc-members:
     :show-inheritance:
 
+Loop
+====
+
+.. autoclass:: libchirp.Loop
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 Message
 =======
 

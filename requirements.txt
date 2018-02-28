@@ -1,5 +1,4 @@
 cffi
-pytest
 flake8
 flake8_mock
 flake8_tuple
@@ -7,4 +6,5 @@ flake8_string_format
 flake8_debugger
 flake8_deprecated
 flake8_docstrings
+pytest<3.4  # Currenty caplog fails
 hypothesis
