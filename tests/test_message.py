@@ -34,7 +34,7 @@ def test_msg_roundtrip(message, header, data, ip, port):
     message.address = ip
     message.port = port
     message._copy_to_c()
-    msg2 = Message(message._msg)
+    msg2 = Message(message._msg_t)
     # Identity is read-only but must stay the same
     assert msg2.identity == old_id
     assert msg2.header == header
@@ -47,9 +47,9 @@ def test_release_does_nothing(message):
     """test_release_does_nothing."""
     # With the message API only we can't test release_slot(), so we assure that
     # it at least does nothing.
-    id_msg = id(message._msg)
+    id_msg = id(message._msg_t)
     message.release_slot()
-    assert id_msg == id(message._msg)
+    assert id_msg == id(message._msg_t)
 
 
 def test_header_bad_type(message):

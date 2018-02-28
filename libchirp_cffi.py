@@ -136,6 +136,8 @@ typedef void (*uv_async_cb)(uv_async_t* handle);
 
 extern "Python" void _loop_async_cb(uv_async_t*);
 extern "Python" void _loop_close_cb(uv_handle_t*);
+extern "Python" void _chirp_log_cb(char msg[], char error);
+extern "Python" void _chirp_done_cb(ch_chirp_t* chirp);
 // UV
 
 typedef enum {
@@ -181,6 +183,9 @@ uv_async_init(uv_loop_t*, uv_async_t* async, uv_async_cb async_cb);
 
 int
 uv_async_send(uv_async_t* async);
+
+ch_error_t
+ch_chirp_close_ts(ch_chirp_t* chirp);
 // Config
 
 struct ch_config_s {
@@ -241,6 +246,23 @@ ch_msg_has_slot(ch_message_t* message);
 
 void
 ch_chirp_release_msg_slot(ch_message_t* msg);
+
+// Chirp
+
+struct ch_chirp_s {
+    void*           user_data;
+    ...;
+};
+
+ch_error_t
+ch_chirp_init(
+        ch_chirp_t*        chirp,
+        const ch_config_t* config,
+        uv_loop_t*         loop,
+        ch_recv_cb_t       recv_cb,
+        ch_start_cb_t      start_cb,
+        ch_done_cb_t       done_cb,
+        ch_log_cb_t        log_cb);
 """
 
 ffibuilder.set_source(

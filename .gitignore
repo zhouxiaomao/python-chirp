@@ -10,3 +10,4 @@ __pycache__
 /.eggs
 /.hypothesis/
 /doc/_build
+/.pytest_cache/

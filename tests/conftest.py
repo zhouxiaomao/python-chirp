@@ -1,6 +1,6 @@
 """Configure pytest."""
 import pytest
-from libchirp import Config, Message
+from libchirp import Config, Message, Loop
 
 
 @pytest.fixture
@@ -13,3 +13,12 @@ def config():
 def message():
     """Return a libchirp message."""
     return Message()
+
+
+@pytest.fixture
+def loop():
+    """Return a libchirp loop."""
+    loop = Loop()
+    loop.run()
+    yield loop
+    loop.stop()

@@ -1,5 +1,6 @@
 """Main module of libchirp, containing common and low level bindings."""
 import atexit
+from concurrent.futures import Future
 from ipaddress import ip_address, IPv6Address
 import logging
 import sys
@@ -147,16 +148,16 @@ class Config(object):
     def __init__(self):
         dself = self.__dict__
         dself['AUTO_RELEASE'] = True
-        conf = _new_nozero("ch_config_t*")
-        dself['_conf'] = conf
-        lib.ch_chirp_config_init(conf)
+        conf_t = _new_nozero("ch_config_t*")
+        dself['_conf_t'] = conf_t
+        lib.ch_chirp_config_init(conf_t)
 
     def __setattr__(self, name, value):
         """Set attributes to the ffi object.
 
         Most attributes are directly set, strings and bools are converted.
         """
-        conf = self.__dict__['_conf']
+        conf = self.__dict__['_conf_t']
         if name in Config._ips:
             setattr(conf, name, ip_address(value).packed)
         elif name in Config._bools:
@@ -174,7 +175,7 @@ class Config(object):
 
         Most attributes are directly get, strings and bools are converted.
         """
-        conf = self.__dict__['_conf']
+        conf = self.__dict__['_conf_t']
         if name in Config._ips:
             return ip_address(bytes(getattr(conf, name))).compressed
         elif name in Config._bools:
@@ -196,7 +197,7 @@ class Message(object):
     """
 
     __slots__ = (
-        '_msg',
+        '_msg_t',
         '_kheader',
         '_kdata',
         '_identity',
@@ -209,18 +210,18 @@ class Message(object):
     )
 
     def __init__(self, cmsg=None):
-        self._msg = cmsg
+        self._msg_t = cmsg
         self._copy_from_c()
         if cmsg:
-            lib.ch_msg_free_data(self._msg)
+            lib.ch_msg_free_data(self._msg_t)
 
     def _ensure_message(self):
         """Ensure that a message exists."""
-        msg = self._msg
+        msg = self._msg_t
         if not msg:
             msg = _new_nozero("ch_message_t*")
             lib.ch_msg_init(msg)
-            self._msg = msg
+            self._msg_t = msg
         return msg
 
     def _copy_from_c(self):
@@ -414,8 +415,8 @@ class Message(object):
         """
         if self.has_slot:
             # TODO test
-            lib.ch_chirp_release_message(self._msg)
-            self._msg = None
+            lib.ch_chirp_release_message(self._msg_t)
+            self._msg_t = None
 
 
 @ffi.def_extern()
@@ -447,7 +448,8 @@ class Loop(object):
     def __init__(self):
         self._stopped = False
         self._started = False
-        self._soon_list = []
+        self._soon_list    = []
+        self._refcnt       = 1
         self._lock         = threading.Lock()
         self._data         = ffi.new_handle(self)
         self._loop_t       = _new_nozero("uv_loop_t*")
@@ -486,11 +488,14 @@ class Loop(object):
 
     def run(self):
         """Run the event loop."""
-        if not self._started:
+        with self._lock:
+            do_it = not self._started
+            stopped = self._stopped
+        if do_it:
             self._started = True
             self._thread = threading.Thread(target=self._target)
             self._thread.start()
-        elif self._stopped:
+        elif stopped:
             # We are silent about multiple run/stop, but if user expects it is
             # possible to restart, we raise an error.
             raise RuntimeError("Cannot restart loop")
@@ -498,9 +503,36 @@ class Loop(object):
     @property
     def running(self):
         """Return True if event-loop is running."""
-        return self._started and not self._stopped
+        with self._lock:
+            return self._started and not self._stopped
 
     def stop(self):
+        """Stop the event-loop.
+
+        For convenience stop() will wait for the last chirp instance to stop.
+        """
+        with self._lock:
+            do_it = False
+            if self._started and not self._stopped:
+                self._stopped = True
+                do_it = True
+        if do_it:
+            self._refdec()
+
+    def _refdec(self):
+        """Decrement refcount. If 0 the loop will be stopped."""
+        with self._lock:
+            self._refcnt -= 1
+            do_it = self._refcnt == 0
+        if do_it:
+            self._do_stop()
+
+    def _refinc(self):
+        """Increment refcount."""
+        with self._lock:
+            self._refcnt += 1
+
+    def _do_stop(self):
         """Stop the event-loop."""
         def stop_libuv(self):
             with self._lock:
@@ -509,8 +541,118 @@ class Loop(object):
                 ffi.cast("uv_handle_t*", async_t),
                 lib._loop_close_cb
             )
-        if self._started and not self._stopped:
-            self._stopped = True
-            self.call_soon(stop_libuv, self)
-            self._thread.join()
-            _l.debug("libuv event-loop stopped")
+        self.call_soon(stop_libuv, self)
+        self._thread.join()
+        _l.debug("libuv event-loop stopped")
+        # Break loops
+        # I first implemented everything nicely with weakrefs and __del__
+        # only to learn that python sometimes calls __del__ so late that
+        # _do_stop() fails. So the user has to call stop.
+        with self._lock:
+            self._thread = None
+            self._data   = None
+
+
+_last_error = threading.local()
+
+
+@ffi.def_extern()
+def _chirp_log_cb(msg, error):
+    """Libchirp (C) calls this to log messages."""
+    emsg = ffi.string(msg).decode("UTF-8")
+    if error:
+        _last_error.data = emsg
+        _l.error(emsg)
+    else:
+        _l.debug(emsg)
+
+
+@ffi.def_extern()
+def _chirp_done_cb(chirp):
+    """Libchirp (C) calls this when the chirp-instance is done."""
+    ffi.from_handle(chirp.user_data)._done.set_result(0)
+
+
+def chirp_error_to_exception(error, msg):
+    """Convert libchirp error-codes to exceptions."""
+    if error == lib.CH_VALUE_ERROR:
+        return ValueError(msg or "CH_VALUE_ERROR")
+    elif error == lib.CH_UV_ERROR:
+        return RuntimeError(msg or "CH_UV_ERROR")
+    elif error == lib.CH_INIT_FAIL:
+        return RuntimeError(msg or "CH_INIT_FAIL")
+    elif error == lib.CH_TLS_ERROR:
+        return RuntimeError(msg or "CH_TLS_ERROR")
+    elif error == lib.CH_EADDRINUSE:
+        return RuntimeError(msg or "CH_EADDRINUSE")
+    elif error == lib.CH_FATAL:
+        return RuntimeError(msg or "CH_FATAL")
+    elif error == lib.CH_PROTOCOL_ERROR:
+        return RuntimeError(msg or "CH_PROTOCOL_ERROR")
+    elif error == lib.CH_PROTOCOL_ERROR:
+        return ConnectionError(msg or "CH_CANNOT_CONNECT")
+    elif error == lib.CH_WRITE_ERROR:
+        return ConnectionError(msg or "CH_WRITE_ERROR")
+    elif error == lib.CH_TIMEOUT:
+        return TimeoutError(msg or "CH_TIMEOUT")
+    elif error == lib.CH_ENOMEM:
+        return MemoryError()
+    else:
+        return Exception(msg or "Unknown error: %d" % error)
+
+
+class ChirpBase(object):
+    """Chirp base for thread-pool and asyncio.
+
+    :param loop     Loop: libuv event-loop
+    :param config Config: chirp config
+    """
+
+    def _chirp_init(self, fut):
+        with self._lock:
+            chirp  = self._chirp_t
+            config = self._config._conf_t
+            loop   = self._loop._loop_t
+        _last_error.data = ""
+        res = lib.ch_chirp_init(
+            chirp,
+            config,
+            loop,
+            ffi.NULL,
+            ffi.NULL,
+            lib._chirp_done_cb,
+            lib._chirp_log_cb
+        )
+        if res == 0:
+            with self._lock:
+                data           = ffi.new_handle(self)
+                self._data     = data
+                chirp.user_data = data
+            fut.set_result(0)
+        else:
+            fut.set_exception(chirp_error_to_exception(
+                res, _last_error.data
+            ))
+
+    def __init__(self, loop, config):
+        assert isinstance(loop, Loop)
+        assert isinstance(config, Config)
+        self._done    = Future()
+        self._lock    = threading.Lock()
+        self._loop    = loop
+        self._config  = config
+        self._chirp_t = _new_nozero("ch_chirp_t*")
+        fut = Future()
+        loop.call_soon(ChirpBase._chirp_init, self, fut)
+        fut.result()  # Raise exception if any
+        loop._refinc()
+
+    def stop(self):
+        """Stop the chirp-instance."""
+        lib.ch_chirp_close_ts(self._chirp_t)
+        self._done.result()
+        self._loop._refdec()
+        with self._lock:
+            # Break loops
+            self._data = None
+            self._loop = None

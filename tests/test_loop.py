@@ -1,5 +1,6 @@
 """Loop tests."""
 from concurrent.futures import Future
+import gc
 from libchirp import Loop
 import pytest
 import threading
@@ -9,9 +10,11 @@ def test_loop_lifecycle(caplog):
     """test_loop_lifecycle."""
     a = Loop()
     a.run()
+    assert len(gc.get_referrers(a)) > 1
     assert a.running
     a.stop()
     assert not a.running
+    assert len(gc.get_referrers(a)) == 1
     assert caplog.record_tuples == [
         ('libchirp', 10, 'libuv event-loop started'),
         ('libchirp', 10, 'libuv event-loop stopped'),
