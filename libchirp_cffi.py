@@ -8,6 +8,7 @@ import sys
 here = os.environ.get("LICHIRP_HERE") or path.abspath(path.dirname(__file__))
 static = os.environ.get("LIBCHIRP_STATIC") == "True"
 
+comp = []
 link = []
 libs = []
 libdirs = []
@@ -264,6 +265,13 @@ ch_chirp_init(
         ch_done_cb_t       done_cb,
         ch_log_cb_t        log_cb);
 """
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "debug":
+        print("debug build")
+        comp.extend([
+            "-ggdb3", "-O0", "-DCH_ENABLE_LOGGING", "-DCH_ENABLE_ASSERTS",
+            "-UNDEBUG"
+        ])
 
 ffibuilder.set_source(
     "_libchirp_cffi",
@@ -271,9 +279,13 @@ ffibuilder.set_source(
     libraries=libs,
     library_dirs=libdirs,
     include_dirs=incdirs,
+    extra_compile_args=comp,
     extra_link_args=link,
 )
 ffibuilder.cdef(_header)
 
 if __name__ == "__main__":
-    ffibuilder.compile(verbose=True)
+    if len(sys.argv) > 1 and sys.argv[1] == "debug":
+        ffibuilder.compile(verbose=True, debug=True)
+    else:
+        ffibuilder.compile(verbose=True)

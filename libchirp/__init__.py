@@ -440,6 +440,7 @@ def _loop_close_cb(handle_t):
     with self._lock:
         loop = self._loop_t
     lib.uv_stop(loop)
+    # TODO loop close
 
 
 class Loop(object):
@@ -560,7 +561,7 @@ _last_error = threading.local()
 def _chirp_log_cb(msg, error):
     """Libchirp (C) calls this to log messages."""
     emsg = ffi.string(msg).decode("UTF-8")
-    if error:
+    if error[0]:
         _last_error.data = emsg
         _l.error(emsg)
     else:
