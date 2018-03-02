@@ -128,7 +128,7 @@ typedef enum { _CH_IPV4 = AF_INET, _CH_IPV6 = AF_INET6 } ch_ip_protocol_t;
 //
 //       Error while writing to socket.
 //
-//    .. c:member:: CH_UNINIT
+//    .. c:member:: CH_NOT_INITIALIZED
 //
 //       Chirp or another object is not initialized.
 //
@@ -185,26 +185,26 @@ typedef enum { _CH_IPV4 = AF_INET, _CH_IPV6 = AF_INET6 } ch_ip_protocol_t;
 // .. code-block:: cpp
 //
 typedef enum {
-    CH_SUCCESS        = 0,
-    CH_VALUE_ERROR    = 1,
-    CH_UV_ERROR       = 2,
-    CH_PROTOCOL_ERROR = 3,
-    CH_EADDRINUSE     = 4,
-    CH_FATAL          = 5,
-    CH_TLS_ERROR      = 6,
-    CH_UNINIT         = 7,
-    CH_IN_PRORESS     = 8,
-    CH_TIMEOUT        = 9,
-    CH_ENOMEM         = 10,
-    CH_SHUTDOWN       = 11,
-    CH_CANNOT_CONNECT = 12,
-    CH_QUEUED         = 13,
-    CH_USED           = 14,
-    CH_MORE           = 15,
-    CH_BUSY           = 16,
-    CH_EMPTY          = 17,
-    CH_WRITE_ERROR    = 18,
-    CH_INIT_FAIL      = 19,
+    CH_SUCCESS         = 0,
+    CH_VALUE_ERROR     = 1,
+    CH_UV_ERROR        = 2,
+    CH_PROTOCOL_ERROR  = 3,
+    CH_EADDRINUSE      = 4,
+    CH_FATAL           = 5,
+    CH_TLS_ERROR       = 6,
+    CH_NOT_INITIALIZED = 7,
+    CH_IN_PRORESS      = 8,
+    CH_TIMEOUT         = 9,
+    CH_ENOMEM          = 10,
+    CH_SHUTDOWN        = 11,
+    CH_CANNOT_CONNECT  = 12,
+    CH_QUEUED          = 13,
+    CH_USED            = 14,
+    CH_MORE            = 15,
+    CH_BUSY            = 16,
+    CH_EMPTY           = 17,
+    CH_WRITE_ERROR     = 18,
+    CH_INIT_FAIL       = 19,
 } ch_error_t;
 
 #endif // ch_libchirp_error_h
@@ -1077,6 +1077,9 @@ ch_chirp_init(
 //    You can free **chirp**, **config** and **loop** either after the **done**
 //    callback has been called or if chirp is set to auto-stop, after the loop
 //    has finished.
+//
+//    For any other return value than CH_ENOMEM, please await the done_cb
+//    before freeing chirp. Config can be freed after ch_chirp_init returns.
 //
 //    Please call `ch_loop_close(loop)` before freeing the loop. Of course if
 //    the loop will continue to run, feel free not to close/free the loop.
