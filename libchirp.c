@@ -7653,11 +7653,19 @@ ch_en_tls_init(void)
     if (_ch_en_manual_tls) {
         return CH_SUCCESS;
     }
+    /* Detect if ssl is already initialized by host program */
+    if (EVP_get_cipherbyname("AES-256-CBC")) {
+        _ch_en_manual_tls = 1;
+        return CH_SUCCESS;
+    }
 #ifdef CH_OPENSSL_10_API
-    SSL_library_init();
-    OpenSSL_add_all_algorithms();
+    if (CRYPTO_get_locking_callback() != NULL) {
+        _ch_en_manual_tls = 1;
+        return CH_SUCCESS;
+    }
+    OPENSSL_add_all_algorithms_noconf();
     SSL_load_error_strings();
-    OPENSSL_config("chirp");
+    SSL_library_init();
 
     return ch_en_tls_threading_setup();
 #else
