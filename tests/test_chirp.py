@@ -26,12 +26,13 @@ def test_lifecycle(config):
     assert not loop.running
 
 
-# def test_listen_error(loop, config):
-#     """test_listen_error."""
-#    config.DH_PARAMS_PEM = "./tests/dh.pem"
-#    config.CERT_CHAIN_PEM = "./tests/cert.pem"
-#     a = ChirpBase(loop, config)
-#     with pytest.raises(RuntimeError):
-#         b = ChirpBase(loop, config)
-#     a.stop()
-#     assert a and b
+def test_listen_error(loop, config):
+    """test_listen_error."""
+    try:
+        config.DH_PARAMS_PEM = "./tests/dh.pem"
+        config.CERT_CHAIN_PEM = "./tests/cert.pem"
+        a = ChirpBase(loop, config)
+        with pytest.raises(OSError):
+            ChirpBase(loop, config)
+    finally:
+        a.stop()

@@ -440,7 +440,6 @@ def _loop_close_cb(handle_t):
     with self._lock:
         loop = self._loop_t
     lib.uv_stop(loop)
-    # TODO loop close
 
 
 class Loop(object):
@@ -545,6 +544,8 @@ class Loop(object):
         self.call_soon(stop_libuv, self)
         self._thread.join()
         _l.debug("libuv event-loop stopped")
+        if lib.ch_loop_close(self._loop_t) != lib.CH_SUCCESS:
+            raise RuntimeError("Closing libuv event-loop failed")
         # Break loops
         # I first implemented everything nicely with weakrefs and __del__
         # only to learn that python sometimes calls __del__ so late that
@@ -585,7 +586,7 @@ def chirp_error_to_exception(error, msg):
     elif error == lib.CH_TLS_ERROR:
         return RuntimeError(msg or "CH_TLS_ERROR")
     elif error == lib.CH_EADDRINUSE:
-        return RuntimeError(msg or "CH_EADDRINUSE")
+        return OSError(msg or "CH_EADDRINUSE")
     elif error == lib.CH_FATAL:
         return RuntimeError(msg or "CH_FATAL")
     elif error == lib.CH_PROTOCOL_ERROR:
@@ -624,14 +625,14 @@ class ChirpBase(object):
             lib._chirp_done_cb,
             lib._chirp_log_cb
         )
+        with self._lock:
+            data           = ffi.new_handle(self)
+            self._data     = data
+            chirp.user_data = data
         if res == 0:
-            with self._lock:
-                data           = ffi.new_handle(self)
-                self._data     = data
-                chirp.user_data = data
             fut.set_result(0)
         else:
-            fut.set_exception(chirp_error_to_exception(
+            fut.set_result(chirp_error_to_exception(
                 res, _last_error.data
             ))
 
@@ -645,7 +646,11 @@ class ChirpBase(object):
         self._chirp_t = _new_nozero("ch_chirp_t*")
         fut = Future()
         loop.call_soon(ChirpBase._chirp_init, self, fut)
-        fut.result()  # Raise exception if any
+        res = fut.result()
+        if res != 0:
+            if not isinstance(res, MemoryError):
+                self._done.result()
+            raise res
         loop._refinc()
 
     def stop(self):

@@ -185,8 +185,6 @@ uv_async_init(uv_loop_t*, uv_async_t* async, uv_async_cb async_cb);
 int
 uv_async_send(uv_async_t* async);
 
-ch_error_t
-ch_chirp_close_ts(ch_chirp_t* chirp);
 // Config
 
 struct ch_config_s {
@@ -264,6 +262,12 @@ ch_chirp_init(
         ch_start_cb_t      start_cb,
         ch_done_cb_t       done_cb,
         ch_log_cb_t        log_cb);
+
+ch_error_t
+ch_chirp_close_ts(ch_chirp_t* chirp);
+
+int
+ch_loop_close(uv_loop_t* loop);
 """
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "debug":
