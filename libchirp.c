@@ -7650,6 +7650,9 @@ ch_en_tls_init(void)
 // .. code-block:: cpp
 //
 {
+    if (_ch_en_manual_tls) {
+        return CH_SUCCESS;
+    }
 #ifdef CH_OPENSSL_10_API
     SSL_library_init();
     OpenSSL_add_all_algorithms();
@@ -10149,6 +10152,7 @@ ch_at_cleanup(void)
 // .. code-block:: cpp
 //
 {
+    uv_mutex_lock(&_ch_at_lock);
     if (_ch_alloc_tree != _ch_at_nil_ptr) {
         fprintf(stderr, "Leaked allocations: \n");
         while (_ch_alloc_tree != _ch_at_nil_ptr) {
@@ -10161,6 +10165,7 @@ ch_at_cleanup(void)
         fprintf(stderr, "\n");
         A(0, "There is a memory leak")
     }
+    uv_mutex_unlock(&_ch_at_lock);
     uv_mutex_destroy(&_ch_at_lock);
 }
 
@@ -10175,7 +10180,9 @@ ch_at_init(void)
 //
 {
     A(uv_mutex_init(&_ch_at_lock) == 0, "Failed to initialize mutex");
+    uv_mutex_lock(&_ch_at_lock);
     _ch_at_tree_init(&_ch_alloc_tree);
+    uv_mutex_unlock(&_ch_at_lock);
 }
 
 // .. c:function::
@@ -10224,10 +10231,10 @@ _ch_at_realloc(void* buf, void* rbuf)
     key.buf = buf;
     uv_mutex_lock(&_ch_at_lock);
     int ret = _ch_at_delete(&_ch_alloc_tree, &key, &track);
-    uv_mutex_unlock(&_ch_at_lock);
     assert(ret == 0);
     track->buf = rbuf;
     ret        = _ch_at_insert(&_ch_alloc_tree, track);
+    uv_mutex_unlock(&_ch_at_lock);
     assert(ret == 0);
     return rbuf;
 }
