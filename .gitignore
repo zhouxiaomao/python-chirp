@@ -11,3 +11,5 @@ __pycache__
 /.hypothesis/
 /doc/_build
 /.pytest_cache/
+/echo_test
+/prof

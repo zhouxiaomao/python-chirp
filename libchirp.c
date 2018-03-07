@@ -5103,6 +5103,15 @@ qs_stack_bind_decl_m(ch_cn_st, ch_connection_t) CH_ALLOW_NL;
 
 // .. c:function::
 void
+ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error);
+//
+//    Abort one message in queue, because connecting failed.
+//
+//    :param ch_remote_t* remote: Remote failed to connect.
+//    :param ch_error_t error: Status returned by connect.
+
+// .. c:function::
+void
 ch_cn_close_cb(uv_handle_t* handle);
 //
 //    Called by libuv after closing a connection handle.
@@ -6802,15 +6811,6 @@ qs_stack_bind_impl_m(ch_cn_st, ch_connection_t) CH_ALLOW_NL;
 // ============
 
 // .. c:function::
-static void
-_ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error);
-//
-//    Abort one message in queue, because connecting failed.
-//
-//    :param ch_remote_t* remote: Remote failed to connect.
-//    :param ch_error_t error: Status returned by connect.
-
-// .. c:function::
 static ch_error_t
 _ch_cn_allocate_buffers(ch_connection_t* conn);
 //
@@ -6865,11 +6865,11 @@ _ch_cn_write_cb(uv_write_t* req, int status);
 MINMAX_FUNCS(size_t)
 
 // .. c:function::
-static void
-_ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error)
+void
+ch_cn_abort_one_message(ch_remote_t* remote, ch_error_t error)
 //    :noindex:
 //
-//    see: :c:func:`_ch_cn_abort_one_message`
+//    see: :c:func:`ch_cn_abort_one_message`
 //
 // .. code-block:: cpp
 //
@@ -7454,7 +7454,7 @@ ch_cn_shutdown(ch_connection_t* conn, int reason)
     }
     if (wam == NULL && msg == NULL && remote != NULL) {
         /* If we have not finished a message we abort one on the remote. */
-        _ch_cn_abort_one_message(remote, reason);
+        ch_cn_abort_one_message(remote, reason);
     }
     /* finish vs abort - finish: cancel a message on the current connection.
      * abort: means canceling a message that hasn't been queued yet. If
@@ -9332,7 +9332,6 @@ _ch_rd_handle_msg(ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg)
     if (ichirp->recv_cb != NULL) {
         ichirp->recv_cb(chirp, msg);
     } else {
-        E(chirp, "No receiving callback function registered", CH_NO_ARG);
         ch_chirp_release_msg_slot(msg);
     }
 }
@@ -10438,7 +10437,7 @@ ch_textaddr_to_sockaddr(
     if (af == AF_INET6) {
         return uv_ip6_addr(text->data, port, (struct sockaddr_in6*) addr);
     } else {
-        A(af, "Unknown IP protocol");
+        A(af == AF_INET, "Unknown IP protocol");
         return uv_ip4_addr(text->data, port, (struct sockaddr_in*) addr);
     }
 }
@@ -10712,7 +10711,7 @@ _ch_wr_connect(ch_remote_t* remote)
            "ch_connection_t:%p",
            tmp_err,
            (void*) conn);
-        ch_free(conn);
+        ch_cn_shutdown(conn, CH_UV_ERROR);
         return CH_INIT_FAIL;
     }
     conn->connect_timeout.data = conn;
@@ -10728,7 +10727,7 @@ _ch_wr_connect(ch_remote_t* remote)
            "ch_connection_t:%p",
            tmp_err,
            (void*) conn);
-        ch_free(conn);
+        ch_cn_shutdown(conn, CH_UV_ERROR);
         return CH_UV_ERROR;
     }
 
@@ -10747,7 +10746,7 @@ _ch_wr_connect(ch_remote_t* remote)
            "Could not initialize tcp. ",
            "ch_connection_t:%p",
            (void*) conn);
-        ch_free(conn);
+        ch_cn_shutdown(conn, CH_CANNOT_CONNECT);
         return CH_INIT_FAIL;
     }
     conn->flags |= CH_CN_INIT_CLIENT;
@@ -10765,7 +10764,7 @@ _ch_wr_connect(ch_remote_t* remote)
           taddr.data,
           remote->port,
           tmp_err);
-        ch_free(conn);
+        ch_cn_shutdown(conn, CH_CANNOT_CONNECT);
         return CH_CANNOT_CONNECT;
     }
     LC(chirp,
@@ -10832,7 +10831,7 @@ _ch_wr_connect_timeout_cb(uv_timer_t* handle)
     ch_connection_t* conn  = handle->data;
     ch_chirp_t*      chirp = conn->chirp;
     ch_chirp_check_m(chirp);
-    LC(chirp, "Connect timed out. ", "ch_connection_t:%p", (void*) conn);
+    EC(chirp, "Connect timed out. ", "ch_connection_t:%p", (void*) conn);
     ch_cn_shutdown(conn, CH_TIMEOUT);
     uv_timer_stop(&conn->connect_timeout);
     /* We have waited long enough, we send the next message */
@@ -11138,7 +11137,12 @@ ch_wr_process_queues(ch_remote_t* remote)
         } else {
             /* Only connect of the queue is not empty */
             if (remote->msg_queue != NULL || remote->cntl_msg_queue != NULL) {
-                return _ch_wr_connect(remote);
+                ch_error_t tmp_err;
+                tmp_err = _ch_wr_connect(remote);
+                if (tmp_err == CH_ENOMEM) {
+                    ch_cn_abort_one_message(remote, CH_ENOMEM);
+                }
+                return tmp_err;
             }
         }
     } else {

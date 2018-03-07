@@ -7,4 +7,7 @@ brew install $PKGS
 brew upgrade $PKGS
 pip3 install cffi 'pytest<3.4' hypothesis  # pytest: currently caplog fails
 python3 libchirp_cffi.py
+clang echo_test.c libchirp.c \
+    -luv -lssl -lcrypto -lm -lpthread -o echo_test -Os -DNDEBUG \
+    -I/usr/local/opt/openssl/include -L/usr/local/opt/openssl/lib
 pytest || exit 1

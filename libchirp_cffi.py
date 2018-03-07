@@ -139,6 +139,8 @@ extern "Python" void _loop_async_cb(uv_async_t*);
 extern "Python" void _loop_close_cb(uv_handle_t*);
 extern "Python" void _chirp_log_cb(char msg[], char error);
 extern "Python" void _chirp_done_cb(ch_chirp_t* chirp);
+extern "Python" void _send_cb(
+        ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
 // UV
 
 typedef enum {
@@ -268,6 +270,9 @@ ch_chirp_close_ts(ch_chirp_t* chirp);
 
 int
 ch_loop_close(uv_loop_t* loop);
+
+ch_error_t
+ch_chirp_send_ts(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb);
 """
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "debug":

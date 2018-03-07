@@ -1,7 +1,12 @@
 """Chirp tests."""
-from libchirp import ChirpBase, Loop
+from libchirp import ChirpBase, Loop, Message
 import gc
+import platform
 import pytest
+import time
+import os
+
+_echo_test = os.path.exists("./echo_test")
 
 
 def test_value_error(loop, config):
@@ -34,5 +39,78 @@ def test_listen_error(loop, config):
         a = ChirpBase(loop, config)
         with pytest.raises(OSError):
             ChirpBase(loop, config)
+    finally:
+        a.stop()
+
+
+def test_send_msg_conn_fail(loop, config, message):
+    """test_send_msg_conn_fail."""
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    a = ChirpBase(loop, config)
+    try:
+        message.address = "127.0.0.1"
+        message.port = 3000
+        with pytest.raises(ConnectionError):
+            a.send(message).result()
+    finally:
+        a.stop()
+
+
+@pytest.mark.skipif(not _echo_test, reason="No echo_test")
+def test_send_msg(loop, config, message, echo):
+    """test_send_msg."""
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    a = ChirpBase(loop, config)
+    try:
+        message.address = "127.0.0.1"
+        message.port = 2993
+        a.send(message).result()
+    finally:
+        a.stop()
+
+
+@pytest.mark.skipif(not _echo_test, reason="No echo_test")
+def test_send_msg_perf(loop, config, echo, capsys):
+    """test_send_msg_perf."""
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    a = ChirpBase(loop, config)
+    try:
+        m = []
+        for _ in range(100):
+            message = Message()
+            message.address = "127.0.0.1"
+            message.port = 2993
+            m.append(message)
+        start = time.time()
+        for _ in range(100):
+            t = []
+            for message in m:
+                t.append(a.send(message))
+            for it in t:
+                it.result()
+        end = time.time()
+        with capsys.disabled():
+            print("\n%d msg/s" % (10000 / (end - start)))
+    finally:
+        a.stop()
+
+
+def test_send_msg_network_unavailable(loop, config, message):
+    """test_send_msg_network_unavailable."""
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    try:
+        a = ChirpBase(loop, config)
+        message.address = "127.0.0.0"
+        message.port = 3000
+        if platform.system() == "Darwin":
+            with pytest.raises(TimeoutError):
+                a.send(message).result()
+        else:
+            with pytest.raises(ConnectionError):
+                a.send(message).result()
     finally:
         a.stop()

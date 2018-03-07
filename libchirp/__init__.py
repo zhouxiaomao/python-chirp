@@ -130,12 +130,18 @@ class Config(object):
        By default chirp will release the message-slot automatically when the
        handler-callback returns. Python boolean.
 
-       In synchronous mode the remote will only send the next message when the
+       Not used in queue-operation: always release the message.
+
+       In synchronous-mode the remote will only send the next message when the
        current message has been released.
 
-       In asynchronous mode when all slots are used up and the TCP-buffers
+       In asynchronous-mode when all slots are used up and the TCP-buffers
        are filled up, the remote will eventually not be able to send more
        messages. After TIMEOUT seconds messages start to time out.
+
+       synchronous-mode/asynchronous-mode are independent from async-, queue-
+       and pool-operation. The modes refer to a single connection, while the
+       operation refers to the interface in python.
 
        See :ref:`modes-of-operation`
     """
@@ -206,11 +212,13 @@ class Message(object):
         '_address',
         '_port',
         '_remote_identity',
+        '_fut',
     )
 
     def __init__(self, cmsg=None):
         self._msg_t = cmsg
         self._copy_from_c()
+        self._fut = None
         if cmsg:
             lib.ch_msg_free_data(self._msg_t)
 
@@ -559,7 +567,7 @@ _last_error = threading.local()
 
 @ffi.def_extern()
 def _chirp_log_cb(msg, error):
-    """Libchirp (C) calls this to log messages."""
+    """libchirp.c calls this to log messages."""
     emsg = ffi.string(msg).decode("UTF-8")
     if error[0]:
         _last_error.data = emsg
@@ -569,41 +577,78 @@ def _chirp_log_cb(msg, error):
 
 
 @ffi.def_extern()
-def _chirp_done_cb(chirp):
-    """Libchirp (C) calls this when the chirp-instance is done."""
-    ffi.from_handle(chirp.user_data)._done.set_result(0)
+def _chirp_done_cb(chirp_t):
+    """libchirp.c calls this when the chirp-instance is done."""
+    ffi.from_handle(chirp_t.user_data)._done.set_result(0)
+
+
+@ffi.def_extern()
+def _send_cb(chirp_t, msg_t, status):
+    """libchirp.c calls this when a message is sent."""
+    chirp = ffi.from_handle(chirp_t.user_data)
+    msg = ffi.from_handle(msg_t.user_data)
+    if status == lib.CH_SUCCESS:
+        msg._fut.set_result(0)
+    else:
+        msg._fut.set_exception(
+            chirp_error_to_exception(status, _last_error.data)
+        )
+    with chirp._lock:
+        del chirp._await_msgs[msg]
+    msg._fut = None
 
 
 def chirp_error_to_exception(error, msg):
     """Convert libchirp error-codes to exceptions."""
     if error == lib.CH_VALUE_ERROR:
-        return ValueError(msg or "CH_VALUE_ERROR")
+        excp = ValueError(msg or "CH_VALUE_ERROR")
     elif error == lib.CH_UV_ERROR:
-        return RuntimeError(msg or "CH_UV_ERROR")
+        excp = RuntimeError(msg or "CH_UV_ERROR")
     elif error == lib.CH_INIT_FAIL:
-        return RuntimeError(msg or "CH_INIT_FAIL")
+        excp = RuntimeError(msg or "CH_INIT_FAIL")
     elif error == lib.CH_TLS_ERROR:
-        return RuntimeError(msg or "CH_TLS_ERROR")
+        excp = RuntimeError(msg or "CH_TLS_ERROR")
     elif error == lib.CH_EADDRINUSE:
-        return OSError(msg or "CH_EADDRINUSE")
+        excp = OSError(msg or "CH_EADDRINUSE")
     elif error == lib.CH_FATAL:
-        return RuntimeError(msg or "CH_FATAL")
+        excp = RuntimeError(msg or "CH_FATAL")
     elif error == lib.CH_PROTOCOL_ERROR:
-        return RuntimeError(msg or "CH_PROTOCOL_ERROR")
-    elif error == lib.CH_PROTOCOL_ERROR:
-        return ConnectionError(msg or "CH_CANNOT_CONNECT")
+        excp = RuntimeError(msg or "CH_PROTOCOL_ERROR")
+    elif error == lib.CH_CANNOT_CONNECT:
+        excp = ConnectionError(msg or "CH_CANNOT_CONNECT")
     elif error == lib.CH_WRITE_ERROR:
-        return ConnectionError(msg or "CH_WRITE_ERROR")
+        excp = ConnectionError(msg or "CH_WRITE_ERROR")
     elif error == lib.CH_TIMEOUT:
-        return TimeoutError(msg or "CH_TIMEOUT")
+        excp = TimeoutError(msg or "CH_TIMEOUT")
     elif error == lib.CH_ENOMEM:
-        return MemoryError()
+        excp = MemoryError()
     else:
-        return Exception(msg or "Unknown error: %d" % error)
+        excp = Exception(msg or "Unknown error: %d" % error)
+    excp.ecode = error
+    return excp
 
 
 class ChirpBase(object):
-    """Chirp base for thread-pool and asyncio.
+    """Chirp base for async-, queue- and pool-operation.
+
+    * :py:class:`libchirp.async.Chirp`: Runs chirp in a :py:mod:`asyncio`
+      environment. Messages are received via a handler and sending is
+      await-able
+
+    * :py:class:`libchirp.queue.Chirp`: Implements a :py:class:`queue.Queue`.
+      Concurrency is achieved by sending multiple messages and waiting for
+      results later. Use :py:attr:`libchirp.Message.identity` as key to a dict,
+      to match-up requests and answers.
+
+    * :py:class:`libchirp.pool.Chirp`: Implements a
+      :py:class:`concurrent.futures.ThreadPoolExecutor`. Used when you have to
+      interface with blocking code. Please only use if really needed.
+
+    Creating a chirp instance can raise the exceptions:
+    :py:class:`OSError`, :py:class:`TimeoutError`, :py:class:`RuntimeError`,
+    :py:class:`ValueError`, :py:class:`MemoryError`.  The exception contains
+    the last error message if any generated by chirp. Also
+    :py:class:`Exception` for unknown errors. See :ref:`exceptions`.
 
     :param loop     Loop: libuv event-loop
     :param config Config: chirp config
@@ -624,8 +669,8 @@ class ChirpBase(object):
             lib._chirp_done_cb,
             lib._chirp_log_cb
         )
+        data = ffi.new_handle(self)
         with self._lock:
-            data           = ffi.new_handle(self)
             self._data     = data
             chirp.user_data = data
         if res == 0:
@@ -638,11 +683,12 @@ class ChirpBase(object):
     def __init__(self, loop, config):
         assert isinstance(loop, Loop)
         assert isinstance(config, Config)
-        self._done    = Future()
-        self._lock    = threading.Lock()
-        self._loop    = loop
-        self._config  = config
-        self._chirp_t = _new_nozero("ch_chirp_t*")
+        self._await_msgs = dict()
+        self._done       = Future()
+        self._lock       = threading.Lock()
+        self._loop       = loop
+        self._config     = config
+        self._chirp_t    = _new_nozero("ch_chirp_t*")
         fut = Future()
         loop.call_soon(ChirpBase._chirp_init, self, fut)
         res = fut.result()
@@ -661,3 +707,45 @@ class ChirpBase(object):
             # Break loops
             self._data = None
             self._loop = None
+
+    def send(self, msg):
+        """Send a message.
+
+        Returns a Future which you can await if you use async-operation or you
+        call result() on it for queue- and pool-operation.
+
+        In synchronous-mode the future finishes once the remote has released
+        the message. In asynchronous-mode the future finishes once the message
+        has been passed to the operating-system.
+
+        Awaiting/Calling result() can raise the exceptions:
+        :py:class:`ConnectionError`, :py:class:`TimeoutError`,
+        :py:class:`RuntimeError`, :py:class:`ValueError`,
+        :py:class:`MemoryError`.  The exception contains the last error message
+        if any generated by chirp. Also :py:class:`Exception` for unknown
+        errors. See :ref:`exceptions`.
+
+        In a low-latency environment up to 64 for futures can be kept open at
+        time for optimal performance. Beyond 64, managing the open requests in
+        chirp and maybe also the operating-system seems to kick in. If you need
+        to improve the performance please experiment in your particular
+        environment.
+
+        :param msg Message: The message to send.
+        :rtype: concurrent.futures.Future
+        """
+        assert isinstance(msg, Message)
+        fut = Future()
+        if msg._fut:
+            raise RuntimeError("Message already sending")
+        with self._lock:
+            msg._fut = fut
+            msg_t = msg._msg_t
+            handle = ffi.new_handle(msg)
+            msg_t.user_data = handle
+            # msg/handle must be kept alive
+            self._await_msgs[msg] = handle
+        _last_error.data = ""
+        msg._copy_to_c()
+        lib.ch_chirp_send_ts(self._chirp_t, msg_t, lib._send_cb)
+        return fut
