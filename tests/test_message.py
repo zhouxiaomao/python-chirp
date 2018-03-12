@@ -76,3 +76,13 @@ def test_port_bad_range(message):
         message.port = -1
     with pytest.raises(AssertionError):
         message.port = 65537
+
+
+def test_identity_quality():
+    """test_identity_quality."""
+    for _ in range(100):
+        msgs = []
+        for _ in range(10000):
+            msgs.append(Message())
+        msg_set = set([msg.identity for msg in msgs])
+        assert len(msg_set) == 10000

@@ -100,7 +100,7 @@ _ch_tst_sent_cb(ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status)
 #ifndef NDEBUG
     CH_WRITE_LOGC(chirp, "Release message.", "ch_message_t:%p", msg);
 #endif
-    ch_chirp_release_msg_slot(msg);
+    ch_chirp_release_msg_slot(chirp, msg, NULL);
 }
 
 static void

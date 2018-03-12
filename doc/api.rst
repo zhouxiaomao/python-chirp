@@ -41,6 +41,22 @@ Creating chirp-instance and sending is common for all implementations.
     :undoc-members:
     :show-inheritance:
 
+
+Queue
+=====
+
+:py:mod:`libchirp.queue` contains references to :py:class:`libchirp.Config`,
+:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. This is possible:
+
+.. code-block:: python
+
+   from libchirp.queue import Chirp, Config, Loop, Message
+
+.. autoclass:: libchirp.queue.Chirp
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 .. _exceptions:
 
 Exceptions

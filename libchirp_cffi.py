@@ -131,6 +131,8 @@ typedef void (*ch_send_cb_t)(
         ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
 typedef void (*ch_recv_cb_t)(ch_chirp_t* chirp, ch_message_t* msg);
 typedef void (*ch_start_cb_t)(ch_chirp_t* chirp);
+typedef void (*ch_release_cb_t)(
+        ch_chirp_t* chirp, uint8_t identity[CH_ID_SIZE], uint32_t serial);
 
 typedef void (*uv_close_cb)(uv_handle_t* handle);
 typedef void (*uv_async_cb)(uv_async_t* handle);
@@ -141,6 +143,9 @@ extern "Python" void _chirp_log_cb(char msg[], char error);
 extern "Python" void _chirp_done_cb(ch_chirp_t* chirp);
 extern "Python" void _send_cb(
         ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
+extern "Python" void _queue_recv_cb(ch_chirp_t* chirp, ch_message_t* msg);
+extern "Python" void _release_cb(
+        ch_chirp_t* chirp, uint8_t identity[CH_ID_SIZE], uint32_t serial);
 // UV
 
 typedef enum {
@@ -223,17 +228,18 @@ struct ch_message_s {
     ch_buf* header;
     ch_buf* data;
     // Local       only data
-    uint8_t       ip_protocol;
-    uint8_t       address[CH_IP_ADDR_SIZE]; // 16
-    int32_t       port;
-    uint8_t       remote_identity[CH_ID_SIZE];
-    void*         user_data;
-    uint8_t       _flags;
-    ch_send_cb_t  _send_cb;
-    uint8_t       _slot;
-    void*         _pool;
-    void*         _ssl_context;
-    ch_message_t* _next;
+    uint8_t         ip_protocol;
+    uint8_t         address[CH_IP_ADDR_SIZE]; // 16
+    int32_t         port;
+    uint8_t         remote_identity[CH_ID_SIZE];
+    void*           user_data;
+    uint8_t         _flags;
+    ch_send_cb_t    _send_cb;
+    ch_release_cb_t _release_cb;
+    uint8_t         _slot;
+    void*           _pool;
+    void*           _ssl_context;
+    ch_message_t*   _next;
 };
 
 void
@@ -245,8 +251,9 @@ ch_msg_init(ch_message_t* message);
 int
 ch_msg_has_slot(ch_message_t* message);
 
-void
-ch_chirp_release_msg_slot(ch_message_t* msg);
+ch_error_t
+ch_chirp_release_msg_slot_ts(
+        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb);
 
 // Chirp
 

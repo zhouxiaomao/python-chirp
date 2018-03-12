@@ -429,7 +429,7 @@ typedef void (*ch_log_cb_t)(char msg[], char error);
 //
 //    .. c:member:: ch_chirp_t* chirp
 //
-//       Chirp object sending
+//       Chirp instance sending
 //
 //    .. c:member:: int status
 //
@@ -446,7 +446,7 @@ typedef void (*ch_send_cb_t)(
 //
 //    .. c:member:: ch_chirp_t* chirp
 //
-//       Chirp object received
+//       Chirp instance receiving
 //
 //    .. c:member:: ch_message_t* msg
 //
@@ -457,13 +457,34 @@ typedef void (*ch_send_cb_t)(
 //
 typedef void (*ch_recv_cb_t)(ch_chirp_t* chirp, ch_message_t* msg);
 
+// .. c:type:: ch_release_cb_t
+//
+//    Called by chirp when message is released.
+//
+//    .. c:member:: ch_chirp_t* chirp
+//
+//       Chirp instance
+//
+//    .. c:member:: uint8_t identity[CH_ID_SIZE] identity
+//
+//       Identity of the message released
+//
+//    .. c:member:: uint32_t serial
+//
+//       Serial of the message released
+//
+// .. code-block:: cpp
+//
+typedef void (*ch_release_cb_t)(
+        ch_chirp_t* chirp, uint8_t identity[CH_ID_SIZE], uint32_t serial);
+
 // .. c:type:: ch_start_cb_t
 //
 //    Callback called when chirp is started
 //
 //    .. c:member:: ch_chirp_t* chirp
 //
-//       Chirp object started
+//       Chirp instance started
 //
 // .. code-block:: cpp
 //
@@ -528,7 +549,8 @@ typedef void* (*ch_realloc_cb_t)(void* buf, size_t new_size);
 //
 //       The serial number of the message. Increases monotonic. Be aware of
 //       overflows, if want to use it for ordering use the delta: serialA -
-//       serialB.
+//       serialB. Only received messages have a serial. But also received
+//       messages can have the serial 0.
 //
 //    .. c:member:: uint8_t type
 //
@@ -627,17 +649,18 @@ struct ch_message_s {
     ch_buf* header;
     ch_buf* data;
     // Local       only data
-    uint8_t       ip_protocol;
-    uint8_t       address[CH_IP_ADDR_SIZE]; // 16
-    int32_t       port;
-    uint8_t       remote_identity[CH_ID_SIZE];
-    void*         user_data;
-    uint8_t       _flags;
-    ch_send_cb_t  _send_cb;
-    uint8_t       _slot;
-    void*         _pool;
-    void*         _ssl_context;
-    ch_message_t* _next;
+    uint8_t         ip_protocol;
+    uint8_t         address[CH_IP_ADDR_SIZE]; // 16
+    int32_t         port;
+    uint8_t         remote_identity[CH_ID_SIZE];
+    void*           user_data;
+    uint8_t         _flags;
+    ch_send_cb_t    _send_cb;
+    ch_release_cb_t _release_cb;
+    uint8_t         _slot;
+    void*           _pool;
+    void*           _ssl_context;
+    ch_message_t*   _next;
 };
 
 // Protocol receiver /Pseudo code/
@@ -1099,16 +1122,49 @@ ch_chirp_init(
 // .. c:function::
 CH_EXPORT
 void
-ch_chirp_release_msg_slot(ch_message_t* msg);
+ch_chirp_release_msg_slot(
+        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb);
 //
 //    Release the internal message-slot and acknowledge the message (if
 //    ACKNOWLEDGE=1). Must be called when the message isn't needed anymore,
-//    afterwards the message may NOT be used anymore.
+//    afterwards the message may NOT be used anymore. The message may belong to
+//    another chirp instance.
 //
 //    IMPORTANT: Neglecting to release the slot will lockup chirp. Never ever
 //    change a messages identity.
 //
+//    The release_cb is only important for the last message in ACKNOWLEDGE=1,
+//    closing before the last message has been acknowledged, could cause an
+//    error on the remote.
+//
+//    :param ch_chirp_t* rchirp: Chirp instances for release_cb
 //    :param ch_message_t* msg: The message representing the slot.
+//    :param ch_release_cb_t release_cb: Called once the message is released.
+//
+
+// .. c:function::
+CH_EXPORT
+ch_error_t
+ch_chirp_release_msg_slot_ts(
+        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb);
+//
+//    Release the internal message-slot and acknowledge the message (if
+//    ACKNOWLEDGE=1). Must be called when the message isn't needed anymore,
+//    afterwards the message may NOT be used anymore. The message may belong to
+//    another chirp instance.
+//
+//    IMPORTANT: Neglecting to release the slot will lockup chirp. Never ever
+//    change a messages identity.
+//
+//    The release_cb is only important for the last message in ACKNOWLEDGE=1,
+//    closing before the last message has been acknowledged, could cause an
+//    error on the remote.
+//
+//    This function is thread-safe.
+//
+//    :param ch_chirp_t* rchirp: Chirp instances for release_cb
+//    :param ch_message_t* msg: The message representing the slot.
+//    :param ch_release_cb_t release_cb: Called once the message is released.
 //
 
 // .. c:function::
