@@ -2,7 +2,9 @@
 import pytest
 from hypothesis import given
 from hypothesis.strategies import binary, sampled_from, integers
-from libchirp import lib, Message
+
+from libchirp import lib
+from libchirp import MessageThread as Message
 
 
 def test_init(message):
@@ -48,7 +50,7 @@ def test_release_does_nothing(message):
     # With the message API only we can't test release_slot(), so we assure that
     # it at least does nothing.
     id_msg = id(message._msg_t)
-    message.release_slot()
+    message.release_slot().result() is None
     assert id_msg == id(message._msg_t)
 
 

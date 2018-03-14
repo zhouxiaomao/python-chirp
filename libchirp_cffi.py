@@ -145,6 +145,7 @@ extern "Python" void _send_cb(
         ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
 extern "Python" void _queue_recv_cb(ch_chirp_t* chirp, ch_message_t* msg);
 extern "Python" void _pool_recv_cb(ch_chirp_t* chirp, ch_message_t* msg);
+extern "Python" void _async_recv_cb(ch_chirp_t* chirp, ch_message_t* msg);
 extern "Python" void _release_cb(
         ch_chirp_t* chirp, uint8_t identity[CH_ID_SIZE], uint32_t serial);
 // UV

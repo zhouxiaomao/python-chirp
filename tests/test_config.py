@@ -2,6 +2,7 @@
 import pytest
 from hypothesis import given, assume
 from hypothesis.strategies import characters
+
 from libchirp import Config
 
 

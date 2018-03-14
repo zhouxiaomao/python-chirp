@@ -1,12 +1,26 @@
-"""Implements the :py:class:`queue.Queue`-based interface."""
+"""Implements the ThreadPool-based interface."""
 
-from libchirp import ChirpBase, Message, Config, Loop
 from concurrent.futures import ThreadPoolExecutor
+
+from libchirp import ChirpBase, Config, Loop, MessageThread
 
 from _libchirp_cffi import ffi, lib  # noqa
 
 
 __all__ = ('Chirp', 'Config', 'Message', 'Loop')
+
+
+class Message(MessageThread):  # noqa
+    """Chirp message. To answer to message just replace the data and send it.
+
+    .. note::
+
+       The underlaying C type is annotated in parens. The properties of the
+       message use asserts to check if the value has the correct type, length,
+       range. You can disable these with python -O.
+    """
+
+    pass
 
 
 def _loop_hander(chirp, msg):
@@ -39,11 +53,11 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
     release automatically once the handler returns.
 
     Concurrency is achieved by sending multiple messages and waiting for
-    results later. Use :py:attr:`libchirp.Message.identity` as key to a dict,
-    to match-up requests and answers.
+    results later. Use :py:attr:`libchirp.pool.Message.identity` as key to a
+    dict, to match-up requests and answers.
 
-    :param libchirp.Loop loop: libuv event-loop
-    :param libchirp.Config config: chirp config
+    :param libchirp.pool.Loop loop: libuv event-loop
+    :param libchirp.pool.Config config: chirp config
     """
 
     def __init__(self, loop, config, max_workers=None, thread_name_prefix=''):
@@ -53,6 +67,6 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
     def handler(self, msg):  # noqa
         """Called when a message arrives.
 
-        :param Message msg: The message
+        :param libchirp.pool.Message msg: The message
         """
         pass

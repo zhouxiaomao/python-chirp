@@ -2,81 +2,25 @@
 Reference API
 =============
 
-.. todo: going to be Standard APIs, because Callback API and maybe uvloop API
-         are added.
+.. toctree::
+   :maxdepth: 2
 
-.. autosummary::
+   asyncio.rst
 
-   libchirp.Config
-   libchirp.Message
+.. toctree::
+   :maxdepth: 2
 
-Config
-======
+   queue.rst
 
-.. autoclass:: libchirp.Config
-    :members:
-    :undoc-members:
-    :show-inheritance:
+.. toctree::
+   :maxdepth: 2
 
-Loop
-====
+   pool.rst
 
-.. autoclass:: libchirp.Loop
-    :members:
-    :undoc-members:
-    :show-inheritance:
+.. toctree::
+   :maxdepth: 2
 
-Message
-=======
-
-.. autoclass:: libchirp.Message
-    :members:
-    :inherited-members:
-    :undoc-members:
-    :show-inheritance:
-
-ChirpBase
-=========
-
-Creating chirp-instance and sending is common for all implementations.
-
-.. autoclass:: libchirp.ChirpBase
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-
-Queue
-=====
-
-:py:mod:`libchirp.queue` contains :py:class:`libchirp.Config`,
-:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. Please use these to
-get right implementation:
-
-.. code-block:: python
-
-   from libchirp.queue import Chirp, Config, Loop, Message
-
-.. autoclass:: libchirp.queue.Chirp
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-Pool
-====
-
-:py:mod:`libchirp.pool` contains :py:class:`libchirp.Config`,
-:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. Please use these to
-get right implementation:
-
-.. code-block:: python
-
-   from libchirp.pool import Chirp, Config, Loop, Message
-
-.. autoclass:: libchirp.pool.Chirp
-    :members:
-    :undoc-members:
-    :show-inheritance:
+   base.rst
 
 .. _exceptions:
 

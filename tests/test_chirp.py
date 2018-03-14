@@ -1,10 +1,11 @@
 """Chirp tests."""
-from libchirp import ChirpBase, Loop, Message
 import gc
 import platform
 import pytest
 import time
 import os
+
+from libchirp import ChirpBase, Loop, MessageThread
 
 _echo_test = os.path.exists("./echo_test")
 
@@ -80,7 +81,7 @@ def test_send_msg_perf(loop, config, echo, capsys):
     try:
         m = []
         for _ in range(100):
-            message = Message()
+            message = MessageThread()
             message.address = "127.0.0.1"
             message.port = 2993
             m.append(message)

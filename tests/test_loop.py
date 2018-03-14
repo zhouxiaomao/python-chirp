@@ -1,9 +1,10 @@
 """Loop tests."""
 from concurrent.futures import Future
 import gc
-from libchirp import Loop
 import pytest
 import threading
+
+from libchirp import Loop
 
 
 def test_loop_lifecycle(caplog):

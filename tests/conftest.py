@@ -1,5 +1,6 @@
 """Configure pytest."""
-from libchirp import ChirpBase, Config, Loop, Message
+from libchirp import ChirpBase, Config, Loop, MessageThread
+from libchirp.queue import Chirp
 import os
 import pytest
 import signal
@@ -16,7 +17,7 @@ def config():
 @pytest.fixture
 def message():
     """Return a libchirp message."""
-    return Message()
+    return MessageThread()
 
 
 @pytest.fixture
@@ -35,6 +36,17 @@ def sender(loop, config):
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     config.PORT = 2992
     a = ChirpBase(loop, config)
+    yield a
+    a.stop()
+
+
+@pytest.fixture
+def queue(loop, config):
+    """Return a libchirp.queue sender."""
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    config.PORT = 2992
+    a = Chirp(loop, config)
     yield a
     a.stop()
 
