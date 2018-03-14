@@ -55,3 +55,4 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
 
         :param Message msg: The message
         """
+        pass
