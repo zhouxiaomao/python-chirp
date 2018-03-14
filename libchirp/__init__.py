@@ -18,7 +18,7 @@ atexit.register(lambda: lib.ch_libchirp_cleanup())
 _new_nozero = ffi.new_allocator(should_clear_after_alloc=False)
 _l = logging.getLogger("libchirp")
 
-__all__ = ('Config', 'Message', 'Loop')
+__all__ = ('Config')
 
 
 class Config(object):
@@ -210,8 +210,10 @@ def _release_cb(chirp_t, identity_t, serial):
     chirp._release_msg(identity, serial)
 
 
-class Message(object):
+class MessageBase(object):
     """Chirp message. To answer to message just replace the data and send it.
+
+    For any implementation.
 
     .. note::
 
@@ -430,6 +432,19 @@ class Message(object):
         """
         msg = self._ensure_message()
         return lib.ch_msg_has_slot(msg) != 0
+
+
+class Message(MessageBase):
+    """Chirp message. To answer to message just replace the data and send it.
+
+    For threading based implementations. (queue, async, pool)
+
+    .. note::
+
+       The underlaying C type is annotated in parens. The properties of the
+       message use asserts to check if the value has the correct type, length,
+       range. You can disable these with python -O.
+    """
 
     def release_slot(self):
         """Release the internal message-slot.

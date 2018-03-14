@@ -94,7 +94,7 @@ API Reference
 .. toctree::
    :maxdepth: 2
 
-   api.rst
+   std_api.rst
 
 Indices and tables
 ==================

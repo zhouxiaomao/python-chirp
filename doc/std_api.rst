@@ -1,5 +1,5 @@
 =============
-API Reference
+Standard APIs
 =============
 
 .. autosummary::
@@ -28,6 +28,7 @@ Message
 
 .. autoclass:: libchirp.Message
     :members:
+    :inherited-members:
     :undoc-members:
     :show-inheritance:
 
@@ -45,8 +46,9 @@ Creating chirp-instance and sending is common for all implementations.
 Queue
 =====
 
-:py:mod:`libchirp.queue` contains references to :py:class:`libchirp.Config`,
-:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. This is possible:
+:py:mod:`libchirp.queue` contains :py:class:`libchirp.Config`,
+:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. Please use these to
+get right implementation:
 
 .. code-block:: python
 
@@ -60,8 +62,9 @@ Queue
 Pool
 ====
 
-:py:mod:`libchirp.pool` contains references to :py:class:`libchirp.Config`,
-:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. This is possible:
+:py:mod:`libchirp.pool` contains :py:class:`libchirp.Config`,
+:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. Please use these to
+get right implementation:
 
 .. code-block:: python
 
