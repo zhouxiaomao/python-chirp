@@ -453,7 +453,7 @@ class Message(MessageBase):
         :py:attr:`libchirp.Config.ACKNOWLEDGE` is True.
 
         If the message as to be released this will return a future, that will
-        be set when the message is released.
+        be set to (identity, serial) when the message is released.
 
         :rtype: None or Future
         """
@@ -632,7 +632,7 @@ def _send_cb(chirp_t, msg_t, status):
     chirp = ffi.from_handle(chirp_t.user_data)
     msg = ffi.from_handle(msg_t.user_data)
     if status == lib.CH_SUCCESS:
-        msg._fut.set_result(0)
+        msg._fut.set_result(msg)
     else:
         msg._fut.set_exception(
             chirp_error_to_exception(status, _last_error.data)
@@ -762,7 +762,7 @@ class ChirpBase(object):
         with self._lock:
             fut = self._release_msgs[key]
             del self._release_msgs[key]
-        fut.set_result(0)
+        fut.set_result(key)
 
     @property
     def loop(self):
@@ -798,7 +798,8 @@ class ChirpBase(object):
         """Send a message.
 
         Returns a Future which you can await if you use async-operation or you
-        call result() on it for queue- and pool-operation.
+        call result() on it for queue- and pool-operation. The result will
+        contain the message that has been sent.
 
         In synchronous-mode the future finishes once the remote has released
         the message. In asynchronous-mode the future finishes once the message
