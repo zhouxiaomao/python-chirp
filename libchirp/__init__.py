@@ -150,6 +150,7 @@ class Config(object):
     _ips     = ('BIND_V4', 'BIND_V6')
     _bools   = ('ACKNOWLEDGE', 'DISABLE_SIGNALS', 'DISABLE_ENCRYPTION')
     _strings = ('CERT_CHAIN_PEM', 'DH_PARAMS_PEM')
+    _locals   = ('AUTO_RELEASE', )
 
     def __init__(self):
         dself = self.__dict__
@@ -164,7 +165,8 @@ class Config(object):
 
         Most attributes are directly set, strings and bools are converted.
         """
-        if self.__dict__['_sealed']:
+        dself = self.__dict__
+        if dself['_sealed']:
             raise RuntimeError("Config is used an therefore read-only.")
         conf = self.__dict__['_conf_t']
         if name in Config._ips:
@@ -176,6 +178,8 @@ class Config(object):
             # Strings must be kept alive
             self.__dict__['_%s' % name] = string
             setattr(conf, name, string)
+        elif name in Config._locals:
+            dself[name] = value
         else:
             setattr(conf, name, value)
 
@@ -184,13 +188,16 @@ class Config(object):
 
         Most attributes are directly get, strings and bools are converted.
         """
-        conf = self.__dict__['_conf_t']
+        dself = self.__dict__
+        conf = dself['_conf_t']
         if name in Config._ips:
             return ip_address(bytes(getattr(conf, name))).compressed
         elif name in Config._bools:
             return bool(getattr(conf, name)[0])
         elif name in Config._strings:
             return ffi.string(getattr(conf, name)).decode("UTF-8")
+        elif name in Config._locals:
+            return dself[name]
         else:
             return getattr(conf, name)
 
@@ -687,6 +694,7 @@ class ChirpBase(object):
         self._lock         = threading.Lock()
         self._loop         = loop
         self._config       = config
+        self._auto_release = config.AUTO_RELEASE
         if not recv:
             self._recv     = ffi.NULL
         else:

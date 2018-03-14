@@ -57,6 +57,21 @@ Queue
     :undoc-members:
     :show-inheritance:
 
+Pool
+====
+
+:py:mod:`libchirp.pool` contains references to :py:class:`libchirp.Config`,
+:py:class:`libchirp.Loop` and :py:class:`libchirp.Message`. This is possible:
+
+.. code-block:: python
+
+   from libchirp.pool import Chirp, Config, Loop, Message
+
+.. autoclass:: libchirp.pool.Chirp
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 .. _exceptions:
 
 Exceptions
