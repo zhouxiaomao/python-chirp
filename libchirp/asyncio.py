@@ -36,9 +36,9 @@ class Message(MessageThread):
     release = release_slot
 
 
-def _async_handler(chirp, msg):
+async def _async_handler(chirp, msg):
     """Call the user-hander and releases the message if AUTO_RELEASE=1."""
-    asyncio.ensure_future(chirp.handler(msg))
+    await chirp.handler(msg)
     if chirp._auto_release:
         msg.release()
 
@@ -50,7 +50,9 @@ def _async_recv_cb(chirp_t, msg_t):
     msg = Message(msg_t)
     chirp._register_msg(msg)
     msg._chirp = chirp
-    chirp._asyncio_loop.call_soon_threadsafe(_async_handler, chirp, msg)
+    asyncio.run_coroutine_threadsafe(
+        _async_handler(chirp, msg), chirp._asyncio_loop
+    )
 
 
 class Chirp(ChirpBase):

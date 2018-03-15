@@ -31,7 +31,6 @@ def test_call_soon():
     """test_call_soon."""
     loop = Loop()
     try:
-        loop.run()
         assert loop.running
         fut = Future()
         loop.call_soon(get_thread, fut)
@@ -43,7 +42,7 @@ def test_call_soon():
 
 def test_call_soon_reverse():
     """test_call_soon_reverse."""
-    loop = Loop()
+    loop = Loop(False)
     try:
         fut = Future()
         loop.call_soon(get_thread, fut)
@@ -58,7 +57,7 @@ def test_call_soon_reverse():
 
 def test_start_stop_orders():
     """test_start_stop_orders."""
-    loop = Loop()
+    loop = Loop(False)
     try:
         assert not loop.running
         loop.stop()

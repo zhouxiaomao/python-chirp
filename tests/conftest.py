@@ -24,7 +24,6 @@ def message():
 def loop():
     """Return a libchirp loop."""
     loop = Loop()
-    loop.run()
     yield loop
     loop.stop()
 

@@ -614,7 +614,7 @@ class MessageThread(MessageBase):
         chirp = self._chirp
         if self.has_slot and chirp:
             with chirp._lock:
-                fut = chirp._release_msgs[(self.identity, self.serial)]
+                fut = chirp._release_msgs[(self.identity, self.serial)][0]
             lib.ch_chirp_release_msg_slot_ts(
                 chirp._chirp_t, self._msg_t, lib._release_cb
             )
@@ -651,9 +651,14 @@ def _loop_close_cb(handle_t):
 
 
 class Loop(object):
-    """Initialize and run a libuv event-loop."""
+    """Initialize and run a libuv event-loop.
 
-    def __init__(self):
+    By default the loop is run.
+
+    :param bool run_loop: Run the loop (True)
+    """
+
+    def __init__(self, run_loop=True):
         self._stopped = False
         self._started = False
         self._soon_list    = []
@@ -665,6 +670,8 @@ class Loop(object):
         self._async_t.data = self._data
         lib.uv_loop_init(self._loop_t)
         lib.uv_async_init(self._loop_t, self._async_t, lib._loop_async_cb)
+        if run_loop:
+            self.run()
 
     def _target(self):
         """Run the event-loop."""
@@ -911,13 +918,13 @@ class ChirpBase(object):
         """Register a message in the release dict."""
         fut = Future()
         with self._lock:
-            self._release_msgs[(msg.identity, msg.serial)] = fut
+            self._release_msgs[(msg.identity, msg.serial)] = (fut, msg)
 
     def _release_msg(self, identity, serial):
         """Call future of a released message."""
         key = (identity, serial)
         with self._lock:
-            fut = self._release_msgs[key]
+            fut = self._release_msgs[key][0]
             del self._release_msgs[key]
         fut.set_result(key)
 
@@ -932,11 +939,10 @@ class ChirpBase(object):
     def stop(self):
         """Stop the chirp-instance."""
         with self._lock:
-            rel_msgs = self._release_msgs
-            self._release_msgs = None
+            rel_msgs = dict(self._release_msgs)
         try:
-            for fut in rel_msgs.values():
-                    fut.result(timeout=self._config.TIMEOUT)
+            for fut, _ in rel_msgs.values():
+                fut.result(timeout=self._config.TIMEOUT)
         except CFTimeoutError:
             raise RuntimeError(
                 "Timeout waiting for released messages, "
@@ -948,6 +954,7 @@ class ChirpBase(object):
             self._loop._refdec()
             with self._lock:
                 # Break loops
+                self._release_msgs = None
                 self._data = None
                 self._loop = None
 
@@ -976,6 +983,7 @@ class ChirpBase(object):
         if msg._fut:
             raise RuntimeError("Message already sending")
         with self._lock:
+            msg._ensure_message()
             msg._fut = fut
             msg_t = msg._msg_t
             handle = ffi.new_handle(msg)

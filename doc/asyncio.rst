@@ -14,6 +14,38 @@ sure you get the right implementation.
    libchirp.asyncio.Chirp
    libchirp.asyncio.Message
 
+.. _echo-server:
+
+Example
+=======
+
+async_echo.py
+
+.. code-block:: python
+
+   import asyncio
+   from libchirp.asyncio import Chirp, Config, Loop
+
+   class MyChirp(Chirp):
+       async def handler(self, msg):
+           print(msg.data)
+           await self.send(msg)
+           aio_loop.stop()
+
+   loop = Loop(); config = Config()
+   config.DISABLE_ENCRYPTION = True
+   aio_loop = asyncio.get_event_loop()
+   try:
+       chirp = MyChirp(loop, config, aio_loop)
+       try:
+           aio_loop.run_forever()
+       finally:
+           chirp.stop()
+   finally:
+       loop.stop()
+
+For a sender see :ref:`sender`.
+
 Chirp
 =====
 
