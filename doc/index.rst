@@ -35,6 +35,15 @@ Features
 
 * Fast
 
+API Reference
+=============
+
+.. toctree::
+   :maxdepth: 2
+
+   std_api.rst
+
+
 .. _modes-of-operation:
 
 Modes of operation
@@ -88,13 +97,35 @@ For more complex application where you have to schedule your operations anyway,
 use :py:attr:`libchirp.Config.ACKNOWLEDGE` = `False`, do periodic bookkeeping
 and resend failed operations.
 
-API Reference
-=============
+.. _concurrency:
 
-.. toctree::
-   :maxdepth: 2
+Concurrency
+===========
 
-   std_api.rst
+For the
+
+* :py:mod:`libchirp.asyncio.Chirp`
+
+* :py:mod:`libchirp.queue.Chirp`
+
+* :py:mod:`libchirp.pool.Chirp`
+
+implementations the libuv evnet-loop runs in a separate thread.
+send()/release_slot() return Futures, which will finish once libchirp.c has
+finished the operation.  Concurrency can be achieved by issuing multiple send()
+commands and waiting for all the resulting futures later. In a low-latency
+environment up to 64 for futures can be kept open at time for optimal
+performance. Beyond 64, managing the open requests in chirp and maybe also the
+operating-system seems to kick in.  If you need to improve the performance
+please experiment in your particular environment.
+
+See also
+
+* :py:func:`concurrent.futures.wait`
+
+* :py:func:`concurrent.futures.as_completed`
+
+* :py:func:`asyncio.gather`
 
 Indices and tables
 ==================

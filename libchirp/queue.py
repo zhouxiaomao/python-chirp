@@ -40,8 +40,10 @@ class Chirp(ChirpBase, Queue):
     results later. Use :py:attr:`libchirp.queue.Message.identity` as key to a
     dict, to match-up requests and answers.
 
-    :param libchirp.queue.Loop loop: libuv event-loop
-    :param libchirp.queue.Config config: chirp config
+    See :ref:`exceptions`.
+
+    :param libchirp.Loop loop: libuv event-loop
+    :param libchirp.Config config: chirp config
     """
 
     def __init__(self, loop, config):

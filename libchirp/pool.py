@@ -53,11 +53,13 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
     release automatically once the handler returns.
 
     Concurrency is achieved by sending multiple messages and waiting for
-    results later. Use :py:attr:`libchirp.pool.Message.identity` as key to a
+    results later. Use :py:attr:`libchirp.MessageBase.identity` as key to a
     dict, to match-up requests and answers.
 
-    :param libchirp.pool.Loop loop: libuv event-loop
-    :param libchirp.pool.Config config: chirp config
+    See :ref:`exceptions`.
+
+    :param libchirp.Loop loop: libuv event-loop
+    :param libchirp.Config config: chirp config
     """
 
     def __init__(self, loop, config, max_workers=None, thread_name_prefix=''):

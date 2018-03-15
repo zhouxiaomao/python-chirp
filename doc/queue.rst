@@ -2,7 +2,8 @@
 Queue
 =====
 
-Please import all classes from namespace :py:mod:`libchirp.queue`
+Please import all classes from namespace :py:mod:`libchirp.queue`, to make sure
+you get the right implementation.
 
 .. code-block:: python
 
@@ -30,3 +31,10 @@ Message
     :inherited-members:
     :undoc-members:
     :show-inheritance:
+
+Config/Loop
+===========
+
+* :py:class:`libchirp.Config`
+
+* :py:class:`libchirp.Loop`

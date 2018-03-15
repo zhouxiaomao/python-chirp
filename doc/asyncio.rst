@@ -31,3 +31,10 @@ Message
     :inherited-members:
     :undoc-members:
     :show-inheritance:
+
+Config/Loop
+===========
+
+* :py:class:`libchirp.Config`
+
+* :py:class:`libchirp.Loop`
