@@ -45,7 +45,14 @@ def test_strings(config, text):
     assert config.CERT_CHAIN_PEM == text
 
 
-def test_attribute_error(config):
-    """test_attribute_error."""
-    with pytest.raises(AttributeError):
-        config.BLA = 3
+def test_sealed(config):
+    """test_sealed."""
+    assert config.AUTO_RELEASE is True
+    config.AUTO_RELEASE = False
+    assert config.AUTO_RELEASE is False
+    config._sealed = True
+    with pytest.raises(RuntimeError):
+        config.AUTO_RELEASE = True
+    assert config.AUTO_RELEASE is False
+    with pytest.raises(RuntimeError):
+        config.BIND_V4 = "0.0.0.0"

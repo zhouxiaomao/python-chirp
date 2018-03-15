@@ -26,149 +26,27 @@ class Config(object):
 
     The underlaying C type is annotated in parens. CFFI will raise errors if
     the values overflow (OverflowError) or don't convert (TypeError).
-
-    .. py:attribute:: REUSE_TIME
-
-       Time until a connection gets garbage collected. Until then the
-       connection will be reused. (float)
-
-    .. py:attribute:: TIMEOUT
-
-       IO related timeout in seconds: Sending messages, connecting to remotes.
-       (float)
-
-    .. py:attribute:: PORT
-
-       Port for listening to connections. (uint16_t)
-
-    .. py:attribute:: BACKLOG
-
-       TCP-listen socket backlog. (uint8_t)
-
-       From man 2 listen:
-
-           The backlog argument defines the maximum length to which the queue
-           of pending connections for sockfd may grow.  If a connection request
-           arrives when the queue is full, the client may receive an error with
-           an indication of ECONNREFUSED or, if the underlying protocol
-           supports retransmission, the request may be ignored so that a later
-           reattempt at connection succeeds.
-
-    .. py:attribute:: MAX_SLOTS
-
-       Count of message-slots used. Allowed values are values between 1 and 32.
-       The default is 0: Use 16 slots of ACKNOWLEDGE=0 and 1 slot if
-       ACKNOWLEDGE=1. (uint8_t)
-
-    .. py:attribute:: ACKNOWLEDGE
-
-       Acknowledge messages. Default True. Makes chirp connection-synchronous.
-       See :ref:`modes-of-operation`. Python boolean expected.
-
-    .. py:attribute:: DISABLE_SIGNALS
-
-       By default chirp closes on SIGINT (Ctrl-C) and SIGTERM. Python boolean
-       expected. Defaults to False.
-
-    .. py:attribute:: BUFFER_SIZE
-
-       Size of the buffer used for a connection. Defaults to 0, which means
-       use the size requested by libuv. Should not be set below 1024.
-       (uint32_t)
-
-    .. py:attribute:: MAX_MSG_SIZE
-
-       Max message size accepted by chirp. (uint32_t)
-
-       If you are concerned about memory usage set config.MAX_SLOTS=1 and
-       config.MAX_MSG_SIZE to something small, depending on your use-case. If
-       you do this, a connection will use about:
-
-       conn_buffers_size = config.BUFFER_SIZE +
-          min(config.BUFFER_SIZE, CH_ENC_BUFFER_SIZE) +
-          sizeof(ch_connection_t) +
-          sizeof(ch_message_t) +
-          (memory allocated by TLS implementation)
-
-       conn_size = conn_buffers_size + config.MAX_MSG_SIZE
-
-       With the default config and SSL conn_buffers_size should be about
-       64k + 16k + 2k + 32k -> 114k. Derived from documentation, no
-       measurement done.
-
-    .. py:attribute:: BIND_V6
-
-       Override IPv6 bind address. String representation expected, parsed by
-       :py:class:`ipaddress.ip_address`.
-
-    .. py:attribute:: BIND_V4
-
-       Override IPv4 bind address. String representation expected, parsed by
-       :py:class:`ipaddress.ip_address`.
-
-    .. py:attribute:: IDENTITY
-
-       Override the chirp-nodes IDENTITY (this chirp instance). By default
-       chirp will generate a IDENTITY. Python bytes of length 16. Everything
-       else will not be accepted by CFFI.
-
-    .. py:attribute:: CERT_CHAIN_PEM
-
-       Path to the verification certificate. Python string.
-
-    .. py:attribute:: DH_PARAMS_PEM
-
-       Path to the file containing DH parameters. Python string.
-
-    .. py:attribute:: DISABLE_ENCRYPTION
-
-       Disables encryption. Only use if you know what you are doing.
-       Connections to "127.0.0.1" and "::1" aren't encrypted anyways. Python
-       boolean expected. Defaults to False.
-
-    .. py:attribute:: AUTO_RELEASE
-
-       By default chirp will release the message-slot automatically when the
-       handler-callback returns. Python boolean.
-
-       Not used in queue-operation: always release the message.
-
-       In synchronous-mode the remote will only send the next message when the
-       current message has been released.
-
-       In asynchronous-mode when all slots are used up and the TCP-buffers
-       are filled up, the remote will eventually not be able to send more
-       messages. After TIMEOUT seconds messages start to time out.
-
-       synchronous-mode/asynchronous-mode are independent from async-, queue-
-       and pool-operation. The modes refer to a single connection, while the
-       operation refers to the interface in python.
-
-       See :ref:`modes-of-operation`
     """
 
     _ips     = ('BIND_V4', 'BIND_V6')
     _bools   = ('ACKNOWLEDGE', 'DISABLE_SIGNALS', 'DISABLE_ENCRYPTION')
     _strings = ('CERT_CHAIN_PEM', 'DH_PARAMS_PEM')
-    _locals   = ('AUTO_RELEASE', )
 
     def __init__(self):
-        dself = self.__dict__
-        dself['_sealed'] = False
-        dself['AUTO_RELEASE'] = True
+        self._sealed = False
+        self._AUTO_RELEASE = True
         conf_t = _new_nozero("ch_config_t*")
-        dself['_conf_t'] = conf_t
+        self._conf_t = conf_t
         lib.ch_chirp_config_init(conf_t)
 
-    def __setattr__(self, name, value):
+    def _setattr_ffi(self, name, value):
         """Set attributes to the ffi object.
 
         Most attributes are directly set, strings and bools are converted.
         """
-        dself = self.__dict__
-        if dself['_sealed']:
+        if self._sealed:
             raise RuntimeError("Config is used an therefore read-only.")
-        conf = self.__dict__['_conf_t']
+        conf = self._conf_t
         if name in Config._ips:
             setattr(conf, name, ip_address(value).packed)
         elif name in Config._bools:
@@ -178,28 +56,303 @@ class Config(object):
             # Strings must be kept alive
             self.__dict__['_%s' % name] = string
             setattr(conf, name, string)
-        elif name in Config._locals:
-            dself[name] = value
         else:
             setattr(conf, name, value)
 
-    def __getattr__(self, name):
+    def _getattr_ffi(self, name):
         """Get attributes from the ffi object.
 
         Most attributes are directly get, strings and bools are converted.
         """
-        dself = self.__dict__
-        conf = dself['_conf_t']
+        conf = self._conf_t
         if name in Config._ips:
             return ip_address(bytes(getattr(conf, name))).compressed
         elif name in Config._bools:
             return bool(getattr(conf, name)[0])
         elif name in Config._strings:
             return ffi.string(getattr(conf, name)).decode("UTF-8")
-        elif name in Config._locals:
-            return dself[name]
         else:
             return getattr(conf, name)
+
+    @property
+    def ACKNOWLEDGE(self):
+        """Get if chirp acknowledges messages.
+
+        Default True. Makes chirp connection-synchronous.  See
+        :ref:`modes-of-operation`. Python boolean expected.
+
+        :rtype: bool
+        """
+        return self._getattr_ffi('ACKNOWLEDGE')
+
+    @ACKNOWLEDGE.setter
+    def ACKNOWLEDGE(self, value):
+        """Set chirp acknowledging messages."""
+        self._setattr_ffi('ACKNOWLEDGE', value)
+
+    @property
+    def AUTO_RELEASE(self):
+        """Get if chirp releases messages.
+
+        By default chirp will release the message-slot automatically when the
+        handler-callback returns. Python boolean.
+
+        Not used in queue-operation: always release the message.
+
+        In synchronous-mode the remote will only send the next message when the
+        current message has been released.
+
+        In asynchronous-mode when all slots are used up and the TCP-buffers
+        are filled up, the remote will eventually not be able to send more
+        messages. After TIMEOUT seconds messages start to time out.
+
+        synchronous-mode/asynchronous-mode are independent from async-, queue-
+        and pool-operation. The modes refer to a single connection, while the
+        operation refers to the interface in python.
+
+        See :ref:`modes-of-operation`
+        """
+        return self._AUTO_RELEASE
+
+    @AUTO_RELEASE.setter
+    def AUTO_RELEASE(self, value):
+        """Set chirp releasing messages."""
+        if self._sealed:
+            raise RuntimeError("Config is used an therefore read-only.")
+        self._AUTO_RELEASE = value
+
+    @property
+    def BACKLOG(self):
+        """Get the TCP-listen socket backlog. (uint8_t).
+
+        From man 2 listen:
+
+            The backlog argument defines the maximum length to which the queue
+            of pending connections for sockfd may grow.  If a connection
+            request arrives when the queue is full, the client may receive an
+            error with an indication of ECONNREFUSED or, if the underlying
+            protocol supports retransmission, the request may be ignored so
+            that a later reattempt at connection succeeds.
+
+        :rtype: int
+        """
+        return self._getattr_ffi('BACKLOG')
+
+    @BACKLOG.setter
+    def BACKLOG(self, value):
+        """Set the TCP-listen socket backlog."""
+        self._setattr_ffi('BACKLOG', value)
+
+    @property
+    def BIND_V4(self):
+        """Override IPv4 bind address.
+
+        String representation expected, parsed by
+        :py:class:`ipaddress.ip_address`.
+
+        :rtype: str
+        """
+        return self._getattr_ffi('BIND_V4')
+
+    @BIND_V4.setter
+    def BIND_V4(self, value):
+        """Override IPv4 bind address."""
+        self._setattr_ffi('BIND_V4', value)
+
+    @property
+    def BIND_V6(self):
+        """Override IPv6 bind address.
+
+        String representation expected, parsed by
+        :py:class:`ipaddress.ip_address`.
+
+        :rtype: str
+        """
+        return self._getattr_ffi('BIND_V6')
+
+    @BIND_V6.setter
+    def BIND_V6(self, value):
+        """Override IPv6 bind address."""
+        self._setattr_ffi('BIND_V6', value)
+
+    @property
+    def BUFFER_SIZE(self):
+        """Get the size of the buffer used for a connection.
+
+        Defaults to 0, which means use the size requested by libuv. Should not
+        be set below 1024. (uint32_t)
+
+        :rtype: int
+        """
+        return self._getattr_ffi('BUFFER_SIZE')
+
+    @BUFFER_SIZE.setter
+    def BUFFER_SIZE(self, value):
+        """Set the size of the buffer used for a connection."""
+        self._setattr_ffi('BUFFER_SIZE', value)
+
+    @property
+    def CERT_CHAIN_PEM(self):
+        """Get the path to the verification certificate. Python string.
+
+        :rtype: str
+        """
+        return self._getattr_ffi('CERT_CHAIN_PEM')
+
+    @CERT_CHAIN_PEM.setter
+    def CERT_CHAIN_PEM(self, value):
+        """Set the path to the verification certificate."""
+        self._setattr_ffi('CERT_CHAIN_PEM', value)
+
+    @property
+    def DH_PARAMS_PEM(self):
+        """Get the path to the file containing DH parameters. Python string.
+
+        :rtype: str
+        """
+        return self._getattr_ffi('DH_PARAMS_PEM')
+
+    @DH_PARAMS_PEM.setter
+    def DH_PARAMS_PEM(self, value):
+        """Set the path to the file containing DH parameters."""
+        self._setattr_ffi('DH_PARAMS_PEM', value)
+
+    @property
+    def DISABLE_ENCRYPTION(self):
+        """Get if encryption is disabled.
+
+        Only use if you know what you are doing.  Connections to "127.0.0.1"
+        and "::1" aren't encrypted anyways. Python boolean expected. Defaults
+        to False.
+
+        :rtype: bool
+        """
+        return self._getattr_ffi('DISABLE_ENCRYPTION')
+
+    @DISABLE_ENCRYPTION.setter
+    def DISABLE_ENCRYPTION(self, value):
+        """Set encryption is disabled."""
+        self._setattr_ffi('DISABLE_ENCRYPTION', value)
+
+    @property
+    def DISABLE_SIGNALS(self):
+        """Get if signals are disabled.
+
+        By default chirp closes on SIGINT (Ctrl-C) and SIGTERM. Python boolean
+        expected. Defaults to False.
+
+        :rtype: bool
+        """
+        return self._getattr_ffi('DISABLE_SIGNALS')
+
+    @DISABLE_SIGNALS.setter
+    def DISABLE_SIGNALS(self, value):
+        """Set signals are disabled."""
+        self._setattr_ffi('DISABLE_SIGNALS', value)
+
+    @property
+    def IDENTITY(self):
+        """Override the chirp-nodes identity (this chirp instance).
+
+        By default chirp will generate a IDENTITY. Python bytes of length 16.
+        Everything else will not be accepted by CFFI.
+
+        :rtype: bytes
+        """
+        return self._getattr_ffi('IDENTITY')
+
+    @IDENTITY.setter
+    def IDENTITY(self, value):
+        """Override the chirp-nodes identity (this chirp instance)."""
+        self._setattr_ffi('IDENTITY', value)
+
+    @property
+    def MAX_MSG_SIZE(self):
+        """Get the max message size accepted by chirp. (uint32_t).
+
+        If you are concerned about memory usage set config.MAX_SLOTS=1 and
+        config.MAX_MSG_SIZE to something small, depending on your use-case. If
+        you do this, a connection will use about:
+
+        conn_buffers_size = config.BUFFER_SIZE +
+           min(config.BUFFER_SIZE, CH_ENC_BUFFER_SIZE) +
+           sizeof(ch_connection_t) +
+           sizeof(ch_message_t) +
+           (memory allocated by TLS implementation)
+
+        conn_size = conn_buffers_size + config.MAX_MSG_SIZE
+
+        With the default config and SSL conn_buffers_size should be about
+        64k + 16k + 2k + 32k -> 114k. Derived from documentation, no
+        measurement done.
+
+        :rtype: int
+        """
+        return self._getattr_ffi('MAX_MSG_SIZE')
+
+    @MAX_MSG_SIZE.setter
+    def MAX_MSG_SIZE(self, value):
+        """Set the max message size accepted by chirp."""
+        self._setattr_ffi('MAX_MSG_SIZE', value)
+
+    @property
+    def MAX_SLOTS(self):
+        """Get the count of message-slots used.
+
+        Allowed values are values between 1 and 32.  The default is 0: Use 16
+        slots of ACKNOWLEDGE=0 and 1 slot if ACKNOWLEDGE=1. (uint8_t)
+
+        :rtype: int
+        """
+        return self._getattr_ffi('MAX_SLOTS')
+
+    @MAX_SLOTS.setter
+    def MAX_SLOTS(self, value):
+        """Set the count of message-slots used."""
+        self._setattr_ffi('MAX_SLOTS', value)
+
+    @property
+    def PORT(self):
+        """Get the Port for listening to connections. (uint16_t).
+
+        :rtype: int
+        """
+        return self._getattr_ffi('PORT')
+
+    @PORT.setter
+    def PORT(self, value):
+        """Set the Port for listening to connections."""
+        self._setattr_ffi('PORT', value)
+
+    @property
+    def REUSE_TIME(self):
+        """Get the time until a connection gets garbage collected.
+
+        Until then the connection will be reused. (float)
+
+        :rtype: float
+        """
+        return self._getattr_ffi('REUSE_TIME')
+
+    @REUSE_TIME.setter
+    def REUSE_TIME(self, value):
+        """Set the time until a connection gets garbage collected."""
+        self._setattr_ffi('REUSE_TIME', value)
+
+    @property
+    def TIMEOUT(self):
+        """Get IO related timeout in seconds.
+
+        Sending messages, connecting to remotes. (float)
+
+        :rtype: float
+        """
+        return self._getattr_ffi('TIMEOUT')
+
+    @TIMEOUT.setter
+    def TIMEOUT(self, value):
+        """Get IO related timeout in seconds."""
+        self._setattr_ffi('TIMEOUT', value)
 
 
 @ffi.def_extern()

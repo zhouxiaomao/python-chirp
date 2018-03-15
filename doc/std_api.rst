@@ -1,6 +1,9 @@
 =============
-Standard APIs
+Reference API
 =============
+
+.. todo: going to be Standard APIs, because Callback API and maybe uvloop API
+         are added.
 
 .. autosummary::
 
