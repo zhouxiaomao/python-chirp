@@ -3442,6 +3442,7 @@ typedef enum {
     CH_MSG_WRITE_DONE   = 1 << 4,
     CH_MSG_FAILURE      = CH_MSG_ACK_RECEIVED | CH_MSG_WRITE_DONE,
     CH_MSG_HAS_SLOT     = 1 << 5,
+    CH_MSG_SEND_ACK     = 1 << 6,
 } ch_msg_flags_t;
 
 #endif // ch_msg_message_h
@@ -4566,10 +4567,6 @@ typedef enum {
 //
 //       Current message-slot
 //
-//    .. c:member:: ch_message_t ack_msg
-//
-//       Buffer used for ack message
-//
 //    .. c:member:: ch_message_t wire_msg
 //
 //       Buffer used store wire message
@@ -4586,21 +4583,15 @@ typedef enum {
 //       Data structure containing preallocated buffers for the chirp
 //       message-slots.
 //
-//    .. c:member:: uint32_t release_serial
-//
-//       The serial of the message currently released.
-//
 // .. code-block:: cpp
 //
 typedef struct ch_reader_s {
     ch_rd_state_t     state;
     ch_bf_slot_t*     slot;
-    ch_message_t      ack_msg;
     ch_message_t      wire_msg;
     size_t            bytes_read;
     ch_buf            net_msg[CH_SR_WIRE_MESSAGE_SIZE];
     ch_buffer_pool_t* pool;
-    uint32_t          release_serial;
 } ch_reader_t;
 
 // .. c:function::
@@ -4634,15 +4625,6 @@ ch_rd_read(ch_connection_t* conn, ch_buf* buffer, size_t bytes_read, int* stop);
 //    :param void* buffer:          The buffer containing ``read`` bytes read.
 //    :param size_t bytes_read:     The number of bytes read.
 //    :param int* stop:             (Out) Stop the reading process.
-//
-
-// .. c:function::
-void
-ch_rd_release_ts_cb(uv_async_t* handle);
-//
-//    Release all messages in the release queue.
-//
-//    :param uv_async_t* handle: Async handler used to trigger release queue.
 //
 // .. code-block:: cpp
 
@@ -5063,6 +5045,14 @@ typedef struct ch_resume_state_s {
 //       Timestamp when the connection was last used. Used to determine
 //       garbage-collection.
 //
+//    .. c:member:: uint32_t release_serial
+//
+//       The serial of the message currently released.
+//
+//    .. c:member:: ch_message_t ack_msg
+//
+//       Buffer used for ack message
+//
 //    .. c:member:: char color
 //
 //       rbtree member
@@ -5115,6 +5105,8 @@ struct ch_connection_s {
     ch_reader_t       reader;
     ch_writer_t       writer;
     uint64_t          timestamp;
+    uint32_t          release_serial;
+    ch_message_t      ack_msg;
     char              color;
     ch_connection_t*  parent;
     ch_connection_t*  left;
@@ -5472,6 +5464,15 @@ ch_chirp_finish_message(
 //    :param int status: Error code
 //
 
+// .. c:function::
+void
+ch_chirp_release_ts_cb(uv_async_t* handle);
+//
+//    Release all messages in the release queue.
+//
+//    :param uv_async_t* handle: Async handler used to trigger release queue.
+//
+
 #endif // ch_chirp_h
 // ======
 // Buffer
@@ -5714,6 +5715,15 @@ static ch_config_t _ch_config_defaults = {
 
 // .. c:function::
 static void
+_ch_chirp_ack_send_cb(ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
+//
+//    Called by chirp once ack_msg is sent.
+//
+//    :param ch_chirp_t* chirp: Chirp instance
+//    :param ch_message_t* msg: Ack message sent
+
+// .. c:function::
+static void
 _ch_chirp_check_closing_cb(uv_prepare_t* handle);
 //
 //    Close chirp when the closing semaphore reaches zero.
@@ -5824,6 +5834,29 @@ char* ch_version = CH_VERSION;
 
 // Definitions
 // ===========
+
+// .. c:function::
+static void
+_ch_chirp_ack_send_cb(ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status)
+//    :noindex:
+//
+//    see: :c:func:`_ch_rd_handshake`
+//
+// .. code-block:: cpp
+//
+{
+    (void) (msg);
+    (void) (status);
+    ch_chirp_check_m(chirp);
+    if (msg->_release_cb != NULL) {
+        ch_chirp_t* rchirp = msg->user_data;
+        ch_chirp_check_m(rchirp);
+        ch_connection_t* conn = msg->_pool;
+        ch_release_cb_t  cb   = msg->_release_cb;
+        msg->_release_cb      = NULL;
+        cb(rchirp, msg->identity, conn->release_serial);
+    }
+}
 
 // .. c:function::
 static void
@@ -6396,10 +6429,10 @@ ch_chirp_init(
         *ichirp->identity = *tmp_conf->IDENTITY;
     }
 
-    if (tmp_conf->MAX_SLOTS == 0) {
-        if (tmp_conf->ACKNOWLEDGE) {
-            tmp_conf->MAX_SLOTS = 1;
-        } else {
+    if (tmp_conf->ACKNOWLEDGE) {
+        tmp_conf->MAX_SLOTS = 1;
+    } else {
+        if (tmp_conf->MAX_SLOTS == 0) {
             tmp_conf->MAX_SLOTS = 16;
         }
     }
@@ -6441,16 +6474,24 @@ ch_chirp_init(
     }
     ichirp->send_ts.data = chirp;
     uninit |= CH_UNINIT_ASYNC_SEND_TS;
-    uv_mutex_init(&ichirp->send_ts_queue_lock);
+    if (uv_mutex_init(&ichirp->send_ts_queue_lock) < 0) {
+        E(chirp, "Could not initialize send_ts_lock", CH_NO_ARG);
+        _ch_chirp_uninit(chirp, uninit);
+        return CH_INIT_FAIL;
+    }
     uninit |= CH_UNINIT_SEND_TS_LOCK;
-    if (uv_async_init(loop, &ichirp->release_ts, ch_rd_release_ts_cb) < 0) {
+    if (uv_async_init(loop, &ichirp->release_ts, ch_chirp_release_ts_cb) < 0) {
         E(chirp, "Could not initialize release_ts handler", CH_NO_ARG);
         _ch_chirp_uninit(chirp, uninit);
         return CH_INIT_FAIL;
     }
     ichirp->release_ts.data = chirp;
     uninit |= CH_UNINIT_ASYNC_RELE_TS;
-    uv_mutex_init(&ichirp->release_ts_queue_lock);
+    if (uv_mutex_init(&ichirp->release_ts_queue_lock) < 0) {
+        E(chirp, "Could not initialize release_ts_lock", CH_NO_ARG);
+        _ch_chirp_uninit(chirp, uninit);
+        return CH_INIT_FAIL;
+    }
     uninit |= CH_UNINIT_RELE_TS_LOCK;
 
     ch_pr_init(chirp, protocol);
@@ -6567,6 +6608,121 @@ ch_chirp_finish_message(
             ch_wr_process_queues(remote);
         }
     }
+}
+
+CH_EXPORT
+void
+ch_chirp_release_msg_slot(
+        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb)
+//    :noindex:
+//
+//    see: :c:func:`ch_chirp_release_msg_slot`
+//
+// .. code-block:: cpp
+//
+{
+    ch_buffer_pool_t* pool = msg->_pool;
+    ch_connection_t*  conn = pool->conn;
+    if (!(msg->_flags & CH_MSG_HAS_SLOT)) {
+        fprintf(stderr,
+                "%s:%d Fatal: Message does not have a slot. "
+                "ch_buffer_pool_t:%p\n",
+                __FILE__,
+                __LINE__,
+                (void*) pool);
+        return;
+    }
+    int call_cb = 1;
+    /* If the connection does not exist, it is already shutdown. The user may
+     * release a message after a connection has been shutdown. We use reference
+     * counting in the buffer pool to delay ch_free of the pool. */
+    if (conn && !(conn->flags & CH_CN_SHUTTING_DOWN)) {
+        ch_chirp_t* chirp = conn->chirp;
+        A(chirp->_init == CH_CHIRP_MAGIC, "Not a ch_chirp_t*");
+        if (msg->_flags & CH_MSG_SEND_ACK) {
+            msg->_flags &= ~CH_MSG_SEND_ACK;
+            /* Send the ack to the connection, in case the user changed the
+             * message for his need, which is absolutely ok, and valid use
+             * case. */
+            ch_message_t* ack_msg = &conn->ack_msg;
+            memcpy(ack_msg->identity, msg->identity, CH_ID_SIZE);
+            ack_msg->user_data = rchirp;
+            A(ack_msg->_release_cb == NULL, "ack_msg in use");
+            ack_msg->_release_cb = release_cb;
+            conn->release_serial = msg->serial;
+            call_cb              = 0;
+            ch_wr_send(chirp, ack_msg, _ch_chirp_ack_send_cb);
+        }
+    }
+    if (msg->_flags & CH_MSG_FREE_DATA) {
+        ch_free(msg->data);
+    }
+    if (msg->_flags & CH_MSG_FREE_HEADER) {
+        ch_free(msg->header);
+    }
+    if (call_cb) {
+        if (release_cb != NULL) {
+            release_cb(rchirp, msg->identity, msg->serial);
+        }
+    }
+    int pool_is_empty = ch_bf_is_exhausted(pool);
+    ch_bf_release(pool, msg->_slot);
+    /* Decrement refcnt and free if zero */
+    ch_bf_free(pool);
+    if (pool_is_empty && conn) {
+        ch_pr_restart_stream(conn);
+    }
+}
+
+// .. c:function::
+CH_EXPORT
+ch_error_t
+ch_chirp_release_msg_slot_ts(
+        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb)
+//    :noindex:
+//
+//    see: :c:func:`ch_chirp_release_msg_slot_ts`
+//
+// .. code-block:: cpp
+//
+{
+    A(rchirp->_init == CH_CHIRP_MAGIC, "Not a ch_chirp_t*");
+    A(msg->_release_cb == NULL, "Message already released");
+    msg->_release_cb       = release_cb;
+    ch_chirp_int_t* ichirp = rchirp->_;
+    uv_mutex_lock(&ichirp->release_ts_queue_lock);
+    ch_msg_enqueue(&ichirp->release_ts_queue, msg);
+    uv_mutex_unlock(&ichirp->release_ts_queue_lock);
+    if (uv_async_send(&ichirp->release_ts) < 0) {
+        E(rchirp, "Could not call release_ts callback", CH_NO_ARG);
+        return CH_UV_ERROR;
+    }
+    return CH_SUCCESS;
+}
+
+// .. c:function::
+void
+ch_chirp_release_ts_cb(uv_async_t* handle)
+//    :noindex:
+//
+//    see: :c:func:`ch_chirp_release_ts_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t* chirp = handle->data;
+    ch_chirp_check_m(chirp);
+    ch_chirp_int_t* ichirp = chirp->_;
+    uv_mutex_lock(&ichirp->release_ts_queue_lock);
+    ch_message_t* cur;
+    ch_msg_dequeue(&ichirp->release_ts_queue, &cur);
+    while (cur != NULL) {
+        uv_mutex_unlock(&ichirp->release_ts_queue_lock);
+        ch_chirp_release_msg_slot(chirp, cur, cur->_release_cb);
+        uv_mutex_lock(&ichirp->release_ts_queue_lock);
+        ch_msg_dequeue(&ichirp->release_ts_queue, &cur);
+    }
+    uv_mutex_unlock(&ichirp->release_ts_queue_lock);
 }
 
 // .. c:function::
@@ -9119,15 +9275,6 @@ ch_pr_stop(ch_protocol_t* protocol)
 
 // .. c:function::
 static void
-_ch_rd_ack_send_cb(ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status);
-//
-//    Called by chirp once ack_msg is sent.
-//
-//    :param ch_chirp_t* chirp: Chirp instance
-//    :param ch_message_t* msg: Ack message sent
-
-// .. c:function::
-static void
 _ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read);
 //
 //    Handle a handshake on the given connection.
@@ -9255,29 +9402,6 @@ char* _ch_rd_state_names[] = {
 
 // .. c:function::
 static void
-_ch_rd_ack_send_cb(ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_rd_handshake`
-//
-// .. code-block:: cpp
-//
-{
-    (void) (msg);
-    (void) (status);
-    ch_chirp_check_m(chirp);
-    if (msg->_release_cb != NULL) {
-        ch_chirp_t* rchirp = msg->user_data;
-        ch_chirp_check_m(rchirp);
-        ch_connection_t* conn = msg->_pool;
-        ch_release_cb_t  cb   = msg->_release_cb;
-        msg->_release_cb      = NULL;
-        cb(rchirp, msg->identity, conn->reader.release_serial);
-    }
-}
-
-// .. c:function::
-static void
 _ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read)
 //    :noindex:
 //
@@ -9362,7 +9486,7 @@ _ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read)
            (void*) conn);
     }
 #endif
-    ch_message_t* ack_msg = &conn->reader.ack_msg;
+    ch_message_t* ack_msg = &conn->ack_msg;
     memcpy(ack_msg->address, conn->address, CH_IP_ADDR_SIZE);
     ack_msg->ip_protocol = conn->ip_protocol;
     ack_msg->port        = conn->port;
@@ -9641,6 +9765,9 @@ _ch_rd_read_step(
                conn->address,
                (msg->ip_protocol == AF_INET6) ? CH_IP_ADDR_SIZE
                                               : CH_IP4_ADDR_SIZE);
+        if (msg->type & CH_MSG_REQ_ACK) {
+            msg->_flags |= CH_MSG_SEND_ACK;
+        }
         /* Direct jump to next read state */
         if (msg->header_len > 0) {
             reader->state = CH_RD_HEADER;
@@ -9811,119 +9938,6 @@ ch_rd_read(ch_connection_t* conn, ch_buf* buf, size_t bytes_read, int* stop)
         }
     } while (bytes_handled < (ssize_t) bytes_read || cont);
     return bytes_handled;
-}
-
-// .. c:function::
-void
-ch_rd_release_ts_cb(uv_async_t* handle)
-//    :noindex:
-//
-//    see: :c:func:`ch_rd_release_ts_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_chirp_t* chirp = handle->data;
-    ch_chirp_check_m(chirp);
-    ch_chirp_int_t* ichirp = chirp->_;
-    uv_mutex_lock(&ichirp->release_ts_queue_lock);
-    ch_message_t* cur;
-    ch_msg_dequeue(&ichirp->release_ts_queue, &cur);
-    while (cur != NULL) {
-        ch_chirp_release_msg_slot(chirp, cur, cur->_release_cb);
-        ch_msg_dequeue(&ichirp->release_ts_queue, &cur);
-    }
-    uv_mutex_unlock(&ichirp->release_ts_queue_lock);
-}
-
-CH_EXPORT
-void
-ch_chirp_release_msg_slot(
-        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb)
-//    :noindex:
-//
-//    see: :c:func:`ch_chirp_release_msg_slot`
-//
-// .. code-block:: cpp
-//
-{
-    ch_buffer_pool_t* pool = msg->_pool;
-    ch_connection_t*  conn = pool->conn;
-    if (!(msg->_flags & CH_MSG_HAS_SLOT)) {
-        fprintf(stderr,
-                "%s:%d Fatal: Message does not have a slot. "
-                "ch_buffer_pool_t:%p\n",
-                __FILE__,
-                __LINE__,
-                (void*) pool);
-        return;
-    }
-    int call_cb = 1;
-    /* If the connection does not exist, it is already shutdown. The user may
-     * release a message after a connection has been shutdown. We use reference
-     * counting in the buffer pool to delay ch_free of the pool. */
-    if (conn && !(conn->flags & CH_CN_SHUTTING_DOWN)) {
-        ch_chirp_t*  chirp  = conn->chirp;
-        ch_reader_t* reader = &conn->reader;
-        A(chirp->_init == CH_CHIRP_MAGIC, "Not a ch_chirp_t*");
-        if (msg->type & CH_MSG_REQ_ACK) {
-            /* Send the ack to the connection, in case the user changed the
-             * message for his need, which is absolutely ok, and valid use
-             * case. */
-            ch_message_t* ack_msg = &reader->ack_msg;
-            memcpy(ack_msg->identity, msg->identity, CH_ID_SIZE);
-            ack_msg->user_data = rchirp;
-            A(ack_msg->_release_cb == NULL, "ack_msg in use");
-            ack_msg->_release_cb   = release_cb;
-            reader->release_serial = msg->serial;
-            call_cb                = 0;
-            ch_wr_send(chirp, ack_msg, _ch_rd_ack_send_cb);
-        }
-    }
-    if (msg->_flags & CH_MSG_FREE_DATA) {
-        ch_free(msg->data);
-    }
-    if (msg->_flags & CH_MSG_FREE_HEADER) {
-        ch_free(msg->header);
-    }
-    if (call_cb) {
-        if (release_cb != NULL) {
-            release_cb(rchirp, msg->identity, msg->serial);
-        }
-    }
-    int pool_is_empty = ch_bf_is_exhausted(pool);
-    ch_bf_release(pool, msg->_slot);
-    /* Decrement refcnt and free if zero */
-    ch_bf_free(pool);
-    if (pool_is_empty && conn) {
-        ch_pr_restart_stream(conn);
-    }
-}
-
-// .. c:function::
-CH_EXPORT
-ch_error_t
-ch_chirp_release_msg_slot_ts(
-        ch_chirp_t* rchirp, ch_message_t* msg, ch_release_cb_t release_cb)
-//    :noindex:
-//
-//    see: :c:func:`ch_chirp_release_msg_slot_ts`
-//
-// .. code-block:: cpp
-//
-{
-    A(rchirp->_init == CH_CHIRP_MAGIC, "Not a ch_chirp_t*");
-    A(msg->_release_cb == NULL, "Message already released");
-    msg->_release_cb       = release_cb;
-    ch_chirp_int_t* ichirp = rchirp->_;
-    uv_mutex_lock(&ichirp->release_ts_queue_lock);
-    ch_msg_enqueue(&ichirp->release_ts_queue, msg);
-    uv_mutex_unlock(&ichirp->release_ts_queue_lock);
-    if (uv_async_send(&ichirp->release_ts) < 0) {
-        E(rchirp, "Could not call release_ts callback", CH_NO_ARG);
-        return CH_UV_ERROR;
-    }
-    return CH_SUCCESS;
 }
 // ======
 // Remote
@@ -11339,8 +11353,8 @@ ch_wr_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
         A(tmp_err == 0, "Inserting remote failed");
         (void) (tmp_err);
     }
-    /* Remote isn't used for 3/4 REUSE_TIME we send a probe, before the acutal
-     * message */
+    /* Remote isn't used for 3/4 REUSE_TIME we send a probe, before the
+     * acutal message */
     _ch_wr_enqeue_probe_if_needed(remote);
 
     int queued = 0;

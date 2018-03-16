@@ -76,7 +76,7 @@ class Config(object):
 
     @property
     def ACKNOWLEDGE(self):
-        """Get if chirp acknowledges messages.
+        """Get if chirp requests and waits for acknowledge messages.
 
         Default True. Makes chirp connection-synchronous.  See
         :ref:`modes-of-operation`. Python boolean expected.

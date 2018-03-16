@@ -33,6 +33,8 @@ pool_echo.py
 
    loop = Loop(); config = Config()
    config.DISABLE_ENCRYPTION = True
+   # Workers usually do not acknowledge
+   config.ACKNOWLEDGE = False
    try:
        chirp = MyChirp(loop, config)
        try:

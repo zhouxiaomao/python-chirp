@@ -89,6 +89,12 @@ Connection-asynchronous
 What should I use?
 ------------------
 
+Rule of thumb:
+
+* Consumers (workers) do not request acknowledge (ACKNOWLEDGE = False)
+
+* Producers request acknowledge if they don't do bookkeeping (ACKNOWLEDGE = True)
+
 For simple message transmission, for example sending events to a time-series
 database we recommend :py:attr:`libchirp.Config.ACKNOWLEDGE` = `True`, since
 chirp will cover this process out of the box.

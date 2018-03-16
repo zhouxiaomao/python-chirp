@@ -27,8 +27,6 @@ queue_sender.py
 
    loop = Loop(); config = Config(); message = Message()
    config.DISABLE_ENCRYPTION = True
-   # The queue interface is a bit tricky with ACKNOWLEDGE
-   config.ACKNOWLEDGE = False
    config.PORT = 2992
    message.data = b'hello'
    message.address = "127.0.0.1"
@@ -36,14 +34,25 @@ queue_sender.py
    try:
        chirp = Chirp(loop, config)
        chirp.send(message).result()
-       msg = chirp.get(timeout=1)
-       print(msg.data)
+       msg = chirp.get()
        msg.release().result()
+       print(msg.data)
    finally:
        chirp.stop()
        loop.stop()
 
 For a echo-server see :ref:`echo-server`.
+
+The usual pattern for the queue interface is:
+
+.. code-block:: python
+
+   config.ACKNOWLEDGE = False
+   while True:
+      msg = chirp.get()
+      # Do heavy work
+      chirp.send(msg)  # Send the result
+      msg.release()  # Notify the remote that the work is done
 
 Chirp
 =====

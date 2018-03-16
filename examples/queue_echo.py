@@ -1,17 +1,15 @@
 from libchirp.queue import Chirp, Config, Loop, Message
 
-loop = Loop(); config = Config(); message = Message()
+loop = Loop(); config = Config()
 config.DISABLE_ENCRYPTION = True
-config.PORT = 2992
-message.data = b'hello'
-message.address = "127.0.0.1"
-message.port = 2998
+# Workers usually do not acknowledge
+config.ACKNOWLEDGE = False
 try:
     chirp = Chirp(loop, config)
-    chirp.send(message).result()
     msg = chirp.get()
-    msg.release().result()
     print(msg.data)
+    chirp.send(msg).result()
+    msg.release().result()
 finally:
     chirp.stop()
     loop.stop()
