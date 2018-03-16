@@ -15,4 +15,4 @@ gcc echo_test.c libchirp.c \
     -DCH_ENABLE_ASSERTS -DCH_ENABLE_LOGGING
 python3 libchirp_cffi.py debug
 python3 -m pytest
-flake8 --ignore=D107,E221
+flake8 --ignore=D107,E221 --exclude=examples/
