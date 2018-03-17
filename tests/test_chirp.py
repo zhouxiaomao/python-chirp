@@ -107,11 +107,11 @@ def test_send_msg_network_unavailable(loop, config, message):
         a = ChirpBase(loop, config)
         message.address = "127.0.0.0"
         message.port = 3000
-        if platform.system() == "Darwin":
-            with pytest.raises(TimeoutError):
+        if platform.system() == "Linux":
+            with pytest.raises(ConnectionError):
                 a.send(message).result()
         else:
-            with pytest.raises(ConnectionError):
+            with pytest.raises(TimeoutError):
                 a.send(message).result()
     finally:
         a.stop()
