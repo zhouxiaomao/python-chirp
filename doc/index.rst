@@ -138,6 +138,52 @@ See also
 
 * :py:func:`asyncio.gather`
 
+Performance
+===========
+
+Glossary
+--------
+
+* Process pass: Execute something in another process and get the result back
+* Thread pass: Execute something in another thread and get the result back
+* Pooled: 16 operations can be active at the same time
+* Single: 1 operation can be active at the same time
+
+Python measurements
+-------------------
+
+* 20'000 thread passes in plain python (single)
+* 3'500 process passes in plain python (single)
+* 42'000 thread passes in plain python (pooled)
+* 3'500 process passes in plain python (pooled)
+  * Actually 3'000 but you wouldn't pool it in that case
+
+libchirp C measurements
+-----------------------
+
+* 48'000 process passes in C (single)
+* 130'000 process passes in C (pooled)
+* Thread passes are not relevant since we always use sockets (syscalls)
+
+libchirp python measurements
+----------------------------
+
+* 18'000 process passes with CFFI bindings (single)
+  * Compared to the 3'500 process passes of pure python this is 5 times faster
+* 23'000 process passes with CFFI bindings (pooled)
+  * Compared to the 3'500 process passes of pure python this is 6.5 times faster
+
+The limiting factor are the thread passes in pure python, since the libuv
+event-loop runs in a separate thread. https://github.com/MagicStack/uvloop could
+eliminate that extra thread, but that is currently beyond the scope of our
+project.
+
+This also means: Using multiple chirp instances in a mesh-topology will increase
+performance.
+
+Notebook: Intel(R) Core(TM) i7-6500U CPU @ 2.50GHz
+Kernel: 4.14.18-0-vanilla
+
 Indices and tables
 ==================
 
