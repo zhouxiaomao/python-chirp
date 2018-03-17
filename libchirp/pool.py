@@ -56,14 +56,16 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
     results later. Use :py:attr:`libchirp.MessageBase.identity` as key to a
     dict, to match-up requests and answers.
 
+    `**kwargs` are passed to ThreadPoolExecutor.
+
     See :ref:`exceptions`.
 
     :param libchirp.Loop loop: libuv event-loop
     :param libchirp.Config config: chirp config
     """
 
-    def __init__(self, loop, config, max_workers=None, thread_name_prefix=''):
-        ThreadPoolExecutor.__init__(self, max_workers, thread_name_prefix)
+    def __init__(self, loop, config, **kwargs):
+        ThreadPoolExecutor.__init__(self, **kwargs)
         ChirpBase.__init__(self, loop, config, lib._pool_recv_cb)
 
     def handler(self, msg):  # noqa
