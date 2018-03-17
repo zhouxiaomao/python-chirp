@@ -75,7 +75,7 @@ def test_echo(config, queue, message):
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     config.AUTO_RELEASE = False
-    config.ACKNOWLEDGE = False
+    config.SYNCHRONOUS = False
     aio_loop = asyncio.get_event_loop()
     fut = asyncio.Future()
 

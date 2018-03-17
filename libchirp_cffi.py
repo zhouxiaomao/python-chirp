@@ -202,7 +202,7 @@ struct ch_config_s {
     uint16_t PORT;
     uint8_t  BACKLOG;
     uint8_t  MAX_SLOTS;
-    char     ACKNOWLEDGE;
+    char     SYNCHRONOUS;
     char     DISABLE_SIGNALS;
     uint32_t BUFFER_SIZE;
     uint32_t MAX_MSG_SIZE;

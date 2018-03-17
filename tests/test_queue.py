@@ -83,7 +83,7 @@ def test_recv_msg_perf_fast(capsys, config, fast_sender):
     try:
         config = Config()
         config.DISABLE_ENCRYPTION = True
-        config.ACKNOWLEDGE = 0
+        config.SYNCHRONOUS = False
         a = Chirp(fast_sender.loop, config)
         messages = []
         for _ in range(100):

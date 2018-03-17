@@ -5700,7 +5700,7 @@ static ch_config_t _ch_config_defaults = {
         .PORT               = 2998,
         .BACKLOG            = 100,
         .MAX_SLOTS          = 0,
-        .ACKNOWLEDGE        = 1,
+        .SYNCHRONOUS        = 1,
         .DISABLE_SIGNALS    = 0,
         .BUFFER_SIZE        = 0,
         .MAX_MSG_SIZE       = CH_MAX_MSG_SIZE,
@@ -6240,10 +6240,10 @@ _ch_chirp_verify_cfg(ch_chirp_t* chirp)
       "Config: timeout must be <= reuse time. (%f, %f)",
       conf->TIMEOUT,
       conf->REUSE_TIME);
-    if (conf->ACKNOWLEDGE == 1) {
+    if (conf->SYNCHRONOUS == 1) {
         V(chirp,
           conf->MAX_SLOTS == 1,
-          "Config: if acknowledge is enabled max slots must be 1.",
+          "Config: if synchronous is enabled max slots must be 1.",
           CH_NO_ARG);
     }
     V(chirp,
@@ -6429,7 +6429,7 @@ ch_chirp_init(
         *ichirp->identity = *tmp_conf->IDENTITY;
     }
 
-    if (tmp_conf->ACKNOWLEDGE) {
+    if (tmp_conf->SYNCHRONOUS) {
         tmp_conf->MAX_SLOTS = 1;
     } else {
         if (tmp_conf->MAX_SLOTS == 0) {
@@ -11169,7 +11169,7 @@ ch_chirp_send(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb)
 //
 {
     ch_chirp_check_m(chirp);
-    if (chirp->_->config.ACKNOWLEDGE != 0) {
+    if (chirp->_->config.SYNCHRONOUS != 0) {
         msg->type = CH_MSG_REQ_ACK;
     } else {
         msg->type = 0;
@@ -11291,7 +11291,7 @@ ch_wr_process_queues(ch_remote_t* remote)
             ch_wr_write(conn, msg);
             return CH_SUCCESS;
         } else if (remote->msg_queue != NULL) {
-            if (chirp->_->config.ACKNOWLEDGE) {
+            if (chirp->_->config.SYNCHRONOUS) {
                 if (remote->wait_ack_message == NULL) {
                     ch_msg_dequeue(&remote->msg_queue, &msg);
                     remote->wait_ack_message = msg;

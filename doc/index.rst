@@ -49,17 +49,19 @@ API Reference
 Modes of operation
 ==================
 
+The internal operation is always asynchronous. libchirp is asynchronous across
+multiple connections. Often you want one peer to be synchronous and the other
+asynchronous, depending on what pattern you implement.
+
 Connection-synchronous
 ----------------------
 
-:py:attr:`libchirp.Config.ACKNOWLEDGE` = `True`
+:py:attr:`libchirp.Config.SYNCHRONOUS` = `True`
 
-* Sending a message only returns a success when the remote has released the message.
+* Sending a message only returns a success (`result()` or `await`) when the remote
+  has released the message.
 
 * No message can be lost by chirp
-
-* For concurrency the application has to disable :py:attr:`libchirp.Config.AUTO_RELEASE`.
-  Then the application has to take care that the message is not lost.
 
 * If the application completes the operation inside the message-handler,
   messages will automatically be throttled. Be aware of the timeout: if the
@@ -71,10 +73,10 @@ Connection-synchronous
 Connection-asynchronous
 -----------------------
 
-:py:attr:`libchirp.Config.ACKNOWLEDGE` = `False`
+:py:attr:`libchirp.Config.SYNCHRONOUS` = `False`
 
-* Sending a message returns a success when the message is successfully written to
-  the operating system
+* Sending a message returns a success (`result()` or `await`) when the message
+  is successfully written to the operating system
 
 * If unexpected errors (ie. remote dies) happen, the message can be lost in the
   TCP-buffer
@@ -91,16 +93,19 @@ What should I use?
 
 Rule of thumb:
 
-* Consumers (workers) do not request acknowledge (ACKNOWLEDGE = False)
+* Consumers (workers) are not synchronous (SYNCHRONOUS = False)
 
-* Producers request acknowledge if they don't do bookkeeping (ACKNOWLEDGE = True)
+* Producers are synchronous if they don't do bookkeeping (SYNCHRONOUS = True)
+
+* If you route messages from a synchronous producer, you want to be synchronous
+  too: Timeouts get propagated to the producer.
 
 For simple message transmission, for example sending events to a time-series
-database we recommend :py:attr:`libchirp.Config.ACKNOWLEDGE` = `True`, since
+database we recommend :py:attr:`libchirp.Config.SYNCHRONOUS` = `True`, since
 chirp will cover this process out of the box.
 
 For more complex application where you have to schedule your operations anyway,
-use :py:attr:`libchirp.Config.ACKNOWLEDGE` = `False`, do periodic bookkeeping
+use :py:attr:`libchirp.Config.SYNCHRONOUS` = `False`, do periodic bookkeeping
 and resend failed operations.
 
 .. _concurrency:

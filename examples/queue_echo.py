@@ -2,8 +2,8 @@ from libchirp.queue import Chirp, Config, Loop, Message
 
 loop = Loop(); config = Config()
 config.DISABLE_ENCRYPTION = True
-# Workers usually do not acknowledge
-config.ACKNOWLEDGE = False
+# Workers are usually asynchronous
+config.SYNCHRONOUS = False
 try:
     chirp = Chirp(loop, config)
     msg = chirp.get()

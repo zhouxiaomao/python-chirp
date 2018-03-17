@@ -29,7 +29,7 @@ class Config(object):
     """
 
     _ips     = ('BIND_V4', 'BIND_V6')
-    _bools   = ('ACKNOWLEDGE', 'DISABLE_SIGNALS', 'DISABLE_ENCRYPTION')
+    _bools   = ('SYNCHRONOUS', 'DISABLE_SIGNALS', 'DISABLE_ENCRYPTION')
     _strings = ('CERT_CHAIN_PEM', 'DH_PARAMS_PEM')
 
     def __init__(self):
@@ -75,7 +75,7 @@ class Config(object):
             return getattr(conf, name)
 
     @property
-    def ACKNOWLEDGE(self):
+    def SYNCHRONOUS(self):
         """Get if chirp requests and waits for acknowledge messages.
 
         Default True. Makes chirp connection-synchronous.  See
@@ -83,12 +83,12 @@ class Config(object):
 
         :rtype: bool
         """
-        return self._getattr_ffi('ACKNOWLEDGE')
+        return self._getattr_ffi('SYNCHRONOUS')
 
-    @ACKNOWLEDGE.setter
-    def ACKNOWLEDGE(self, value):
-        """Set chirp acknowledging messages."""
-        self._setattr_ffi('ACKNOWLEDGE', value)
+    @SYNCHRONOUS.setter
+    def SYNCHRONOUS(self, value):
+        """Set if chirp requests and waits for acknowledge messages."""
+        self._setattr_ffi('SYNCHRONOUS', value)
 
     @property
     def AUTO_RELEASE(self):
@@ -300,7 +300,8 @@ class Config(object):
         """Get the count of message-slots used.
 
         Allowed values are values between 1 and 32.  The default is 0: Use 16
-        slots of ACKNOWLEDGE=0 and 1 slot if ACKNOWLEDGE=1. (uint8_t)
+        slots of `SYNCHRONOUS` = `False` and 1 slot if `SYNCHRONOUS` = `True`.
+        (uint8_t)
 
         :rtype: int
         """
@@ -602,8 +603,8 @@ class MessageThread(MessageBase):
     def release_slot(self):
         """Release the internal message-slot. This method returns a Future.
 
-        Will also acknowledge the message, if
-        :py:attr:`libchirp.Config.ACKNOWLEDGE` is True.
+        Will also acknowledge the message if the remote requested a
+        acknowledge-message.
 
         The result of the future will be set to (identity, serial) once the
         message is released. If the message had no slot, the result will be set

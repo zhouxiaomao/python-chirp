@@ -34,8 +34,8 @@ async_echo.py
 
    loop = Loop(); config = Config()
    config.DISABLE_ENCRYPTION = True
-   # Workers usually do not acknowledge
-   config.ACKNOWLEDGE = False
+   # Workers are usually asynchronous
+   config.SYNCHRONOUS = False
    aio_loop = asyncio.get_event_loop()
    try:
        chirp = MyChirp(loop, config, aio_loop)

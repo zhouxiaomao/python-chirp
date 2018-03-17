@@ -22,8 +22,8 @@ class Message(MessageThread):
     def release_slot(self):
         """Release the internal message-slot. This method is await-able.
 
-        Will also acknowledge the message, if
-        :py:attr:`libchirp.Config.ACKNOWLEDGE` is True.
+        Will also acknowledge the message if the remote requested a
+        acknowledge-message.
 
         The result of the future will be set to (identity, serial) once the
         message is released. If the message had no slot, the result will be set

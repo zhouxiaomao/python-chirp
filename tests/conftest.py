@@ -54,7 +54,7 @@ def queue(loop, config):
 def fast_sender(loop, config):
     """Return a libchirp sender."""
     config.DISABLE_ENCRYPTION = True
-    config.ACKNOWLEDGE = 0
+    config.SYNCHRONOUS = False
     config.PORT = 2992
     a = ChirpBase(loop, config)
     yield a
