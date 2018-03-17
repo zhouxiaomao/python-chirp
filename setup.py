@@ -45,10 +45,10 @@ except (SystemExit, Exception):
 
 Please install dependencies (libuv>1.0, openssl or libressl):
 
-Alpine:         apk add libffi-dev libressl-dev libuv-dev
-Debian-based:   apt install libffi-dev libssl-dev libuv1-dev
-Redhat-based:   yum install libffi-devel openssl-devel libuv-devel
-Arch:           pacman -S libffi openssl libuv
-OSX:            brew install libffi openssl libuv
+Alpine:       apk add python3-dev libffi-dev libressl-dev libuv-dev
+Debian-based: apt install python3-dev libffi-dev libssl-dev libuv1-dev
+Redhat-based: yum install python3-devel libffi-devel openssl-devel libuv-devel
+Arch:         pacman -S libffi openssl libuv
+OSX:          brew install libffi openssl libuv
 """)
     raise
