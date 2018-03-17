@@ -1,2 +1,2 @@
-include *.rst *.py
+include *.rst *.py *.c *.h
 recursive-include examples *.py
