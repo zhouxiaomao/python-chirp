@@ -69,8 +69,8 @@ Dependencies
    Arch:         pacman -S libffi openssl libuv
    OSX:          brew install libffi openssl libuv
 
-As long has libchirp is beta we only provide wheels for Windows, since building
-on Windows is very complex.
+As long as libchirp is beta we only provide wheels for Windows: building on
+Windows is very complex.
 
 pip
 ---
