@@ -161,8 +161,8 @@ Python measurements
 libchirp C measurements
 -----------------------
 
-* 48'000 process passes in C (single)
-* 130'000 process passes in C (pooled)
+* 55'000 process passes in C (single)
+* 240'000 process passes in C (pooled)
 * Thread passes are not relevant since we always use sockets (syscalls)
 
 libchirp python measurements
