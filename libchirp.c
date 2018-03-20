@@ -3589,6 +3589,7 @@ ch_textaddr_to_sockaddr(
 //
 // .. code-block:: cpp
 //
+/* #include "common.h" */
 /* #include "connection.h" */
 /* #include "libchirp/chirp.h" */
 /* #include "rbtree.h" */
@@ -3695,6 +3696,7 @@ ch_pr_debounce_connection(ch_connection_t* conn);
 //    :param ch_connection_t* conn: Connection object
 //
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 void
 ch_pr_decrypt_read(ch_connection_t* conn, int* stop);
@@ -3704,6 +3706,8 @@ ch_pr_decrypt_read(ch_connection_t* conn, int* stop);
 //
 //    :param ch_connection_t* conn: Pointer to a connection handle.
 //    :param int* stop:             (Out) Stop the reading process.
+//
+#endif
 
 // .. c:function::
 void
@@ -3756,6 +3760,12 @@ ch_pr_init(ch_chirp_t* chirp, ch_protocol_t* protocol);
 // .. code-block:: cpp
 //
 #endif // ch_protocol_h
+//
+// .. code-block:: cpp
+
+/* #include "libchirp-config.h" */
+#ifndef CH_WITHOUT_TLS
+
 // =================
 // Encryption header
 // =================
@@ -3881,6 +3891,7 @@ ch_en_init(ch_chirp_t* chirp, ch_encryption_t* enc);
 //    :param ch_encryption_t* enc: Encryption to initialize
 
 #endif // ch_encryption_h
+#endif // CH_WITHOUT_TLS
 // =============
 // Remote header
 // =============
@@ -4639,9 +4650,6 @@ ch_rd_read(ch_connection_t* conn, ch_buf* buffer, size_t bytes_read, int* stop);
 // Connection state machine
 // ========================
 //
-// TODO: Due missing features the state machine is not yet completely followed.
-// Please always consider this definitions when changing connection handling.
-//
 // Variables
 // ---------
 //
@@ -4773,6 +4781,7 @@ ch_rd_read(ch_connection_t* conn, ch_buf* buffer, size_t bytes_read, int* stop);
 //
 // .. code-block:: cpp
 //
+/* #include "common.h" */
 /* #include "libchirp/chirp.h" */
 /* #include "message.h" */
 /* #include "qs.h" */
@@ -4785,8 +4794,10 @@ ch_rd_read(ch_connection_t* conn, ch_buf* buffer, size_t bytes_read, int* stop);
 //
 // .. code-block:: cpp
 //
+#ifndef CH_WITHOUT_TLS
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
+#endif
 
 // Declarations
 // ============
@@ -4866,11 +4877,12 @@ typedef enum {
     CH_CN_DO_CLOSE_ACCOUTING   = 1 << 8,
     CH_CN_STOPPED              = 1 << 9,
     CH_CN_INCOMING             = 1 << 10,
-    CH_CN_INIT_CLIENT          = 1 << 11,
-    CH_CN_INIT_READER_WRITER   = 1 << 12,
-    CH_CN_INIT_CONNECT_TIMEOUT = 1 << 13,
-    CH_CN_INIT_ENCRYPTION      = 1 << 14,
-    CH_CN_INIT_BUFFERS         = 1 << 15,
+    CH_CN_ENCRYPTED_WRITE      = 1 << 11,
+    CH_CN_INIT_CLIENT          = 1 << 12,
+    CH_CN_INIT_READER_WRITER   = 1 << 13,
+    CH_CN_INIT_CONNECT_TIMEOUT = 1 << 14,
+    CH_CN_INIT_ENCRYPTION      = 1 << 15,
+    CH_CN_INIT_BUFFERS         = 1 << 16,
     CH_CN_INIT =
             (CH_CN_INIT_CLIENT | CH_CN_INIT_READER_WRITER |
              CH_CN_INIT_ENCRYPTION | CH_CN_INIT_BUFFERS)
@@ -4948,10 +4960,21 @@ typedef struct ch_resume_state_s {
 //       The actual libuv buffer for writing data over TLS (using the
 //       buffer_wtls data type).
 //
-//    .. c:member:: uv_buf_t buffer_any_uv
+//    .. c:member:: unsigned int nbufs
 //
-//       Generic libuv (data-) buffer used for writing over a connection. The
-//       data type of the buffer must be provided when writing.
+//       Number of buffers to be written
+//
+//    .. c:member:: uv_buf_t* bufs
+//
+//       Generic libuv (data-) buffer used for writing over a connection.
+//
+//    .. c:member:: unsigned int bufs_size
+//
+//       The current size of bufs. Will be resized if needed.
+//
+//    .. c:member:: unsigned int bufs_index
+//
+//       The bufs index that is currently writing
 //
 //    .. c:member:: size_t buffer_size
 //
@@ -4971,17 +4994,13 @@ typedef struct ch_resume_state_s {
 //       Holds how many bytes have been written over a connection. This is
 //       typically zero at first and gets increased with each partial write.
 //
-//    .. c:member:: size_t write_size
-//
-//       Indicates how many bytes shall in total be written over a connection.
-//
-//    .. c:member:: ch_buf* write_buffer
-//
-//       Pointer to the write buffer. The buffer that will be written to.
-//
 //    .. c:member:: ch_remote_t* remote
 //
 //       Pointer to the remote of this connection.
+//
+//    .. c:member:: ch_remote_t* delete_remote
+//
+//       Remote to be deleted after shutdown.
 //
 //    .. c:member:: ch_chirp_t* chirp
 //
@@ -5078,6 +5097,7 @@ struct ch_connection_s {
     uint8_t           remote_identity[CH_ID_SIZE];
     ch_chirp_t*       chirp;
     ch_remote_t*      remote;
+    ch_remote_t*      delete_remote;
     uv_tcp_t          client;
     uv_connect_t      connect;
     ch_buf*           buffer_uv;
@@ -5085,36 +5105,37 @@ struct ch_connection_s {
     ch_buf*           buffer_rtls;
     uv_buf_t          buffer_uv_uv;
     uv_buf_t          buffer_wtls_uv;
-    uv_buf_t          buffer_any_uv;
+    unsigned int      nbufs;
+    uv_buf_t*         bufs;
+    unsigned int      bufs_size;
+    unsigned int      bufs_index;
     size_t            buffer_size;
     size_t            buffer_rtls_size;
     uv_write_cb       write_callback;
     size_t            write_written;
-    size_t            write_size;
-    ch_buf*           write_buffer;
     ch_resume_state_t read_resume;
     ch_resume_state_t tls_resume;
     uv_write_t        write_req;
     uv_timer_t        connect_timeout;
     int8_t            shutdown_tasks;
     uint32_t          flags;
-    SSL*              ssl;
-    BIO*              bio_ssl;
-    BIO*              bio_app;
-    int               tls_handshake_state;
-    ch_reader_t       reader;
-    ch_writer_t       writer;
-    uint64_t          timestamp;
-    uint32_t          release_serial;
-    ch_message_t      ack_msg;
-    char              color;
-    ch_connection_t*  parent;
-    ch_connection_t*  left;
-    ch_connection_t*  right;
-    ch_connection_t*  next;
+#ifndef CH_WITHOUT_TLS
+    SSL* ssl;
+    BIO* bio_ssl;
+    BIO* bio_app;
+#endif
+    int              tls_handshake_state;
+    ch_reader_t      reader;
+    ch_writer_t      writer;
+    uint64_t         timestamp;
+    uint32_t         release_serial;
+    ch_message_t     ack_msg;
+    char             color;
+    ch_connection_t* parent;
+    ch_connection_t* left;
+    ch_connection_t* right;
+    ch_connection_t* next;
 };
-
-// TODO: Timestamp has to be in ch_connection_t because of old connections
 
 // Data Struct Prototypes
 // ----------------------
@@ -5190,6 +5211,7 @@ ch_cn_init(ch_chirp_t* chirp, ch_connection_t* conn, uint8_t flags);
 //                          otherwise
 //
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 ch_error_t
 ch_cn_init_enc(ch_chirp_t* chirp, ch_connection_t* conn);
@@ -5199,7 +5221,9 @@ ch_cn_init_enc(ch_chirp_t* chirp, ch_connection_t* conn);
 //    :param ch_chirp_t* chirp: Chirp instance
 //    :param ch_connection_t* conn: Connection to initialize
 //
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 void
 ch_cn_send_if_pending(ch_connection_t* conn);
@@ -5208,18 +5232,22 @@ ch_cn_send_if_pending(ch_connection_t* conn);
 //
 //    :param ch_connection_t* conn: Connection
 //
-//
+#endif
+
 // .. c:function::
 void
 ch_cn_write(
-        ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback);
+        ch_connection_t* conn,
+        const uv_buf_t   bufs[],
+        unsigned int     nbufs,
+        uv_write_cb      callback);
 //
 //    Send data to remote
 //
 //    :param ch_connection_t* conn: Connection
-//    :param void* buf: Buffer to send. It must stay valid till the callback is
-//                      called.
-//    :param size_t size: Size of data to send
+//    :param const uv_buf_t: Buffers to send. The bases must stay valid till
+//                           the callback is called.
+//    :param unsigned int nbufs: Count of buffers to send
 //    :param uv_write_cb: Callback when data is written, can be NULL
 //
 //
@@ -5238,12 +5266,13 @@ ch_cn_write(
 // * TLS support
 //
 //   * Connections to 127.0.0.1 and ::1 aren't encrypted
+//   * We support and test with OpenSSL and LibreSSL
 //
 // * Easy message routing
 //
 // * Robust
 //
-//   * No message can be lost without an error (or it is a bug)
+//   * No message can be lost without an error (in sync mode)
 //
 // * Very thin API
 //
@@ -5252,11 +5281,20 @@ ch_cn_write(
 //
 // * Fast
 //
-//   * Up to 50'000 msg/s on a single-connection (encrypted 35'000 msg/s)
-//   * Up to 100'000 msg/s in star-topology (encrypted same)
+//   * Up to 240'000 msg/s on a single-connection, in an unrealistic test:
 //
-//     * Which shows that chirp is highly optimized, but still if the network
-//       delay is bigger star-topology is the way to go.
+//     * Run on loopback
+//
+//     * Nothing was executed
+//
+//     * No encryption
+//
+//     * Asynchronous
+//
+//     * The test shows that chirp is highly optimized, but if the network
+//       delay is bigger star- or mesh-topology can improve throughput.
+//
+//   * Up to 55'000 msg/s in synchronous mode
 //
 // .. code-block:: cpp
 //
@@ -5296,6 +5334,7 @@ ch_cn_write(
 //
 // .. code-block:: cpp
 //
+/* #include "common.h" */
 /* #include "encryption.h" */
 /* #include "libchirp.h" */
 /* #include "protocol.h" */
@@ -5412,28 +5451,30 @@ typedef enum {
 // .. code-block:: cpp
 //
 struct ch_chirp_int_s {
-    ch_config_t     config;
-    int             closing_tasks;
-    uint8_t         flags;
-    uv_async_t      close;
-    uv_async_t      start;
-    ch_start_cb_t   start_cb;
-    uv_signal_t     signals[2];
-    uv_prepare_t    close_check;
-    ch_protocol_t   protocol;
+    ch_config_t   config;
+    int           closing_tasks;
+    uint8_t       flags;
+    uv_async_t    close;
+    uv_async_t    start;
+    ch_start_cb_t start_cb;
+    uv_signal_t   signals[2];
+    uv_prepare_t  close_check;
+    ch_protocol_t protocol;
+#ifndef CH_WITHOUT_TLS
     ch_encryption_t encryption;
-    uv_loop_t*      loop;
-    uint8_t         identity[CH_ID_SIZE];
-    uint16_t        public_port;
-    ch_message_t*   send_ts_queue;
-    uv_async_t      send_ts;
-    uv_mutex_t      send_ts_queue_lock;
-    ch_message_t*   release_ts_queue;
-    uv_async_t      release_ts;
-    uv_mutex_t      release_ts_queue_lock;
-    ch_recv_cb_t    recv_cb;
-    uv_async_t      done;
-    ch_done_cb_t    done_cb;
+#endif
+    uv_loop_t*    loop;
+    uint8_t       identity[CH_ID_SIZE];
+    uint16_t      public_port;
+    ch_message_t* send_ts_queue;
+    uv_async_t    send_ts;
+    uv_mutex_t    send_ts_queue_lock;
+    ch_message_t* release_ts_queue;
+    uv_async_t    release_ts;
+    uv_mutex_t    release_ts_queue_lock;
+    ch_recv_cb_t  recv_cb;
+    uv_async_t    done;
+    ch_done_cb_t  done_cb;
 };
 
 
@@ -5671,6 +5712,10 @@ ch_bf_release(ch_buffer_pool_t* pool, int id)
 // Declarations
 // ============
 //
+// .. code-block:: cpp
+
+MINMAX_FUNCS(float)
+
 // .. c:var:: uv_mutex_t _ch_chirp_init_lock
 //
 //    It seems that initializing signals accesses a shared data-structure. We
@@ -5880,10 +5925,12 @@ _ch_chirp_check_closing_cb(uv_prepare_t* handle)
         tmp_err = uv_prepare_stop(handle);
         A(tmp_err == CH_SUCCESS, "Could not stop prepare callback");
         (void) (tmp_err);
+#ifndef CH_WITHOUT_TLS
         if (!ichirp->config.DISABLE_ENCRYPTION) {
             tmp_err = ch_en_stop(&ichirp->encryption);
             A(tmp_err == CH_SUCCESS, "Could not stop encryption");
         }
+#endif
         uv_close((uv_handle_t*) handle, _ch_chirp_closing_down_cb);
     }
     if (ichirp->closing_tasks < 0) {
@@ -6193,6 +6240,7 @@ _ch_chirp_verify_cfg(ch_chirp_t* chirp)
 //
 {
     ch_config_t* conf = &chirp->_->config;
+#ifndef CH_WITHOUT_TLS
     if (!conf->DISABLE_ENCRYPTION) {
         V(chirp,
           conf->DH_PARAMS_PEM != NULL,
@@ -6211,6 +6259,7 @@ _ch_chirp_verify_cfg(ch_chirp_t* chirp)
           "Config: cert %s does not exist.",
           conf->CERT_CHAIN_PEM);
     }
+#endif
     V(chirp,
       conf->PORT > 1024,
       "Config: port must be > 1024. (%d)",
@@ -6220,8 +6269,8 @@ _ch_chirp_verify_cfg(ch_chirp_t* chirp)
       "Config: backlog must be < 128. (%d)",
       conf->BACKLOG);
     V(chirp,
-      conf->TIMEOUT <= 60,
-      "Config: timeout must be <= 60. (%f)",
+      conf->TIMEOUT <= 1200,
+      "Config: timeout must be <= 1200. (%f)",
       conf->TIMEOUT);
     V(chirp,
       conf->TIMEOUT >= 0.1,
@@ -6406,36 +6455,36 @@ ch_chirp_init(
     }
     uninit |= CH_UNINIT_ICHIRP;
     memset(ichirp, 0, sizeof(*ichirp));
-    ichirp->done_cb           = done_cb;
-    ichirp->config            = *config;
-    ichirp->public_port       = config->PORT;
-    ichirp->loop              = loop;
-    ichirp->start_cb          = start_cb;
-    ichirp->recv_cb           = recv_cb;
-    ch_config_t*     tmp_conf = &ichirp->config;
-    ch_protocol_t*   protocol = &ichirp->protocol;
-    ch_encryption_t* enc      = &ichirp->encryption;
-    chirp->_                  = ichirp;
+    ichirp->done_cb         = done_cb;
+    ichirp->config          = *config;
+    ichirp->public_port     = config->PORT;
+    ichirp->loop            = loop;
+    ichirp->start_cb        = start_cb;
+    ichirp->recv_cb         = recv_cb;
+    ch_config_t*   tconf    = &ichirp->config;
+    ch_protocol_t* protocol = &ichirp->protocol;
+    chirp->_                = ichirp;
     if (log_cb != NULL) {
         ch_chirp_set_log_callback(chirp, log_cb);
     }
 
     unsigned int i = 0;
-    while (i < (sizeof(tmp_conf->IDENTITY) - 1) && tmp_conf->IDENTITY[i] == 0)
+    while (i < (sizeof(tconf->IDENTITY) - 1) && tconf->IDENTITY[i] == 0)
         i += 1;
-    if (tmp_conf->IDENTITY[i] == 0) {
+    if (tconf->IDENTITY[i] == 0) {
         ch_random_ints_as_bytes(ichirp->identity, sizeof(ichirp->identity));
     } else {
-        *ichirp->identity = *tmp_conf->IDENTITY;
+        *ichirp->identity = *tconf->IDENTITY;
     }
 
-    if (tmp_conf->SYNCHRONOUS) {
-        tmp_conf->MAX_SLOTS = 1;
+    if (tconf->SYNCHRONOUS) {
+        tconf->MAX_SLOTS = 1;
     } else {
-        if (tmp_conf->MAX_SLOTS == 0) {
-            tmp_conf->MAX_SLOTS = 16;
+        if (tconf->MAX_SLOTS == 0) {
+            tconf->MAX_SLOTS = 16;
         }
     }
+    tconf->REUSE_TIME = ch_max_float(tconf->REUSE_TIME, tconf->TIMEOUT * 3);
 
     if (uv_async_init(loop, &ichirp->done, _ch_chirp_done_cb) < 0) {
         E(chirp, "Could not initialize done handler", CH_NO_ARG);
@@ -6501,7 +6550,9 @@ ch_chirp_init(
         _ch_chirp_uninit(chirp, uninit);
         return tmp_err;
     }
-    if (!tmp_conf->DISABLE_ENCRYPTION) {
+#ifndef CH_WITHOUT_TLS
+    ch_encryption_t* enc = &ichirp->encryption;
+    if (!tconf->DISABLE_ENCRYPTION) {
         ch_en_init(chirp, enc);
         tmp_err = ch_en_start(enc);
         if (tmp_err != CH_SUCCESS) {
@@ -6513,6 +6564,7 @@ ch_chirp_init(
             return tmp_err;
         }
     }
+#endif
 #ifdef CH_ENABLE_LOGGING
     char id_str[CH_ID_SIZE * 2 + 1];
     ch_bytes_to_hex(
@@ -6875,7 +6927,11 @@ ch_libchirp_cleanup(void)
     }
     _ch_libchirp_initialized = 0;
     uv_mutex_destroy(&_ch_chirp_init_lock);
+#ifndef CH_WITHOUT_TLS
     ch_error_t ret = ch_en_tls_cleanup();
+#else
+    ch_error_t ret = CH_SUCCESS;
+#endif
 #ifdef CH_ENABLE_ASSERTS
     ch_at_cleanup();
 #endif
@@ -6909,7 +6965,11 @@ ch_libchirp_init(void)
 #ifdef CH_ENABLE_ASSERTS
     ch_at_init();
 #endif
+#ifndef CH_WITHOUT_TLS
     return ch_en_tls_init();
+#else
+    return CH_SUCCESS;
+#endif
 }
 
 // .. c:function::
@@ -7002,7 +7062,9 @@ ch_run(uv_loop_t* loop)
 //
 // .. code-block:: cpp
 //
+#ifndef CH_WITHOUT_TLS
 #include <openssl/err.h>
+#endif
 
 // Data Struct Prototypes
 // ======================
@@ -7024,7 +7086,7 @@ _ch_cn_allocate_buffers(ch_connection_t* conn);
 //
 //    :param ch_connection_t* conn: Connection
 //
-//
+
 // .. c:function::
 static void
 _ch_cn_closing(ch_connection_t* conn);
@@ -7032,7 +7094,9 @@ _ch_cn_closing(ch_connection_t* conn);
 //    Called by ch_cn_shutdown to enter the closing stage.
 //
 //    :param ch_connection_t: Connection to close
+//
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_cn_partial_write(ch_connection_t* conn);
@@ -7041,7 +7105,9 @@ _ch_cn_partial_write(ch_connection_t* conn);
 //
 //    :param ch_connection_t* conn: Connection
 //
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_cn_send_pending_cb(uv_write_t* req, int status);
@@ -7052,7 +7118,9 @@ _ch_cn_send_pending_cb(uv_write_t* req, int status);
 //                            connection handle
 //    :param int status: Send status
 //
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_cn_write_cb(uv_write_t* req, int status);
@@ -7062,6 +7130,7 @@ _ch_cn_write_cb(uv_write_t* req, int status);
 //    :param uv_write_t* req: Write request
 //    :param int status: Write status
 //
+#endif
 
 // Definitions
 // ===========
@@ -7151,6 +7220,8 @@ _ch_cn_allocate_buffers(ch_connection_t* conn)
     conn->buffer_rtls_size = size;
     conn->buffer_uv_uv     = uv_buf_init(conn->buffer_uv, conn->buffer_size);
     conn->buffer_wtls_uv   = uv_buf_init(conn->buffer_wtls, conn->buffer_size);
+    conn->bufs             = ch_alloc(sizeof(uv_buf_t) * 3);
+    conn->bufs_size        = 3;
     conn->flags |= CH_CN_INIT_BUFFERS;
     A((conn->flags & CH_CN_INIT) == CH_CN_INIT,
       "Connection not fully initialized");
@@ -7201,6 +7272,7 @@ _ch_cn_closing(ch_connection_t* conn)
     }
 }
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_cn_partial_write(ch_connection_t* conn)
@@ -7222,9 +7294,10 @@ _ch_cn_partial_write(ch_connection_t* conn)
     conn->flags |= CH_CN_BUF_WTLS_USED;
 #endif
     for (;;) {
-        int can_write_more = 1;
-        int pending        = BIO_pending(conn->bio_app);
-        while (pending && can_write_more) {
+        /* Read all data pending in BIO */
+        int can_read_more = 1;
+        int pending       = BIO_pending(conn->bio_app);
+        while (pending && can_read_more) {
             ssize_t read = BIO_read(
                     conn->bio_app,
                     conn->buffer_wtls + bytes_read,
@@ -7239,29 +7312,49 @@ _ch_cn_partial_write(ch_connection_t* conn)
                 return;
             }
             bytes_read += read;
-            int is_write_size_valid =
-                    (bytes_encrypted + conn->write_written) < conn->write_size;
-            int is_buffer_size_valid = bytes_read < conn->buffer_size;
+            can_read_more = bytes_read < conn->buffer_size;
 
-            can_write_more = is_write_size_valid && is_buffer_size_valid;
-            pending        = BIO_pending(conn->bio_app);
+            pending = BIO_pending(conn->bio_app);
         }
-        if (!can_write_more) {
+        if (!can_read_more) {
             break;
         }
-        int tmp_err = SSL_write(
-                conn->ssl,
-                conn->write_buffer + bytes_encrypted + conn->write_written,
-                conn->write_size - bytes_encrypted - conn->write_written);
-        bytes_encrypted += tmp_err;
-        A(tmp_err > -1, "SSL_write failure unexpected");
-        if (tmp_err < 0) {
-            EC(chirp,
-               "SSL error writing to BIO, shutting down connection. ",
-               "ch_connection_t:%p",
-               (void*) conn);
-            ch_cn_shutdown(conn, CH_TLS_ERROR);
-            return;
+        uv_buf_t* buf      = &conn->bufs[conn->bufs_index];
+        int can_write_more = (bytes_encrypted + conn->write_written) < buf->len;
+        if (!can_write_more) {
+            /* Switch to next buffer if available or break */
+            int changed = 0;
+            while (conn->bufs_index < (conn->nbufs - 1)) {
+                conn->bufs_index += 1;
+                changed = 1;
+                if (conn->bufs[conn->bufs_index].len != 0) {
+                    break;
+                }
+            }
+            if (conn->bufs[conn->bufs_index].len == 0 || !changed) {
+                break;
+            }
+            conn->write_written = 0;
+            bytes_encrypted     = 0;
+            can_write_more      = 1;
+        }
+        buf = &conn->bufs[conn->bufs_index];
+        /* Write data into BIO */
+        if (can_read_more && can_write_more) {
+            int tmp_err = SSL_write(
+                    conn->ssl,
+                    buf->base + bytes_encrypted + conn->write_written,
+                    buf->len - bytes_encrypted - conn->write_written);
+            bytes_encrypted += tmp_err;
+            A(tmp_err > -1, "SSL_write failure unexpected");
+            if (tmp_err < 0) {
+                EC(chirp,
+                   "SSL error writing to BIO, shutting down connection. ",
+                   "ch_connection_t:%p",
+                   (void*) conn);
+                ch_cn_shutdown(conn, CH_TLS_ERROR);
+                return;
+            }
         }
     }
     conn->buffer_wtls_uv.len = bytes_read;
@@ -7278,7 +7371,9 @@ _ch_cn_partial_write(ch_connection_t* conn)
        (void*) conn);
     conn->write_written += bytes_encrypted;
 }
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_cn_send_pending_cb(uv_write_t* req, int status)
@@ -7317,7 +7412,9 @@ _ch_cn_send_pending_cb(uv_write_t* req, int status)
     }
     ch_cn_send_if_pending(conn);
 }
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_cn_write_cb(uv_write_t* req, int status)
@@ -7347,14 +7444,15 @@ _ch_cn_write_cb(uv_write_t* req, int status)
         return;
     }
     /* Check if we can write data */
-    int pending = BIO_pending(conn->bio_app);
-    if (conn->write_size > conn->write_written || pending) {
+    uv_buf_t* buf     = &conn->bufs[conn->bufs_index];
+    int       pending = BIO_pending(conn->bio_app);
+    if (buf->len > conn->write_written || pending) {
         _ch_cn_partial_write(conn);
         LC(chirp,
            "Partially encrypted %d of %d bytes. ",
            "ch_connection_t:%p",
            (int) conn->write_written,
-           (int) conn->write_size,
+           (int) buf->len,
            (void*) conn);
     } else {
         A(pending == 0, "Unexpected pending data on TLS write");
@@ -7364,7 +7462,9 @@ _ch_cn_write_cb(uv_write_t* req, int status)
            (int) conn->write_written,
            (void*) conn);
         conn->write_written = 0;
-        conn->write_size    = 0;
+#ifdef CH_ENABLE_ASSERTS
+        conn->flags &= ~CH_CN_ENCRYPTED_WRITE;
+#endif
         if (conn->write_callback != NULL) {
             uv_write_cb cb       = conn->write_callback;
             conn->write_callback = NULL;
@@ -7372,6 +7472,7 @@ _ch_cn_write_cb(uv_write_t* req, int status)
         }
     }
 }
+#endif
 
 // .. c:function::
 void
@@ -7412,6 +7513,7 @@ ch_cn_close_cb(uv_handle_t* handle)
         }
         if (conn->flags & CH_CN_INIT_BUFFERS) {
             A(conn->buffer_uv, "Initialized buffers inconsistent");
+            ch_free(conn->bufs);
             ch_free(conn->buffer_uv);
             if (conn->flags & CH_CN_ENCRYPTED) {
                 A(conn->buffer_wtls, "Initialized buffers inconsistent");
@@ -7421,6 +7523,7 @@ ch_cn_close_cb(uv_handle_t* handle)
             }
             conn->flags &= ~CH_CN_INIT_BUFFERS;
         }
+#ifndef CH_WITHOUT_TLS
         if (conn->flags & CH_CN_ENCRYPTED) {
             /* The doc says this frees conn->bio_ssl I tested it. let's
              * hope they never change that. */
@@ -7431,12 +7534,22 @@ ch_cn_close_cb(uv_handle_t* handle)
                 BIO_free(conn->bio_app);
             }
         }
+#endif
         /* Since we define a unencrypted connection as CH_CN_INIT_ENCRYPTION. */
         conn->flags &= ~CH_CN_INIT_ENCRYPTION;
         A(!(conn->flags & CH_CN_INIT),
           "Connection resources haven't been freed completely");
         A(!(conn->flags & CH_CN_CONNECTED),
           "Connection not properly disconnected");
+        ch_remote_t* remote = conn->delete_remote;
+        if (remote != NULL) {
+            LC(chirp,
+               "Deleted ch_remote_t: %p. ",
+               "ch_connection_t:%p",
+               (void*) remote,
+               (void*) conn);
+            ch_rm_free(remote);
+        }
         ch_free(conn);
         LC(chirp,
            "Closed connection, closing semaphore (%d). ",
@@ -7472,9 +7585,11 @@ ch_cn_init(ch_chirp_t* chirp, ch_connection_t* conn, uint8_t flags)
         return tmp_err;
     }
     conn->flags |= CH_CN_INIT_READER_WRITER;
+#ifndef CH_WITHOUT_TLS
     if (conn->flags & CH_CN_ENCRYPTED) {
         tmp_err = ch_cn_init_enc(chirp, conn);
     }
+#endif
     if (tmp_err != CH_SUCCESS) {
         return tmp_err;
     }
@@ -7483,6 +7598,7 @@ ch_cn_init(ch_chirp_t* chirp, ch_connection_t* conn, uint8_t flags)
     return _ch_cn_allocate_buffers(conn);
 }
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 ch_error_t
 ch_cn_init_enc(ch_chirp_t* chirp, ch_connection_t* conn)
@@ -7526,6 +7642,7 @@ ch_cn_init_enc(ch_chirp_t* chirp, ch_connection_t* conn)
     LC(chirp, "SSL context created. ", "ch_connection_t:%p", (void*) conn);
     return CH_SUCCESS;
 }
+#endif
 
 // .. c:function::
 void
@@ -7551,6 +7668,7 @@ ch_cn_read_alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf)
     buf->len  = conn->buffer_size;
 }
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 void
 ch_cn_send_if_pending(ch_connection_t* conn)
@@ -7601,6 +7719,7 @@ ch_cn_send_if_pending(ch_connection_t* conn)
            (void*) conn);
     }
 }
+#endif
 
 // .. c:function::
 ch_error_t
@@ -7630,10 +7749,10 @@ ch_cn_shutdown(ch_connection_t* conn, int reason)
     /* In case this conn is in old_connections remove it, since we now cleaned
      * it up*/
     ch_cn_delete(&ichirp->protocol.old_connections, conn, &out);
+    conn->remote = NULL; /* Disassociate from remote */
     if (conn->flags & CH_CN_INIT_CLIENT) {
         uv_read_stop((uv_stream_t*) &conn->client);
     }
-    conn->remote      = NULL; /* Disassociate from remote */
     ch_message_t* msg = writer->msg;
     ch_message_t* wam = NULL;
     /* In early handshake remote can empty, since we allocate resources after
@@ -7658,14 +7777,15 @@ ch_cn_shutdown(ch_connection_t* conn, int reason)
         msg->_flags |= CH_MSG_FAILURE;
         ch_chirp_finish_message(chirp, conn, msg, reason);
     }
-    if (wam == NULL && msg == NULL && remote != NULL) {
-        /* If we have not finished a message we abort one on the remote. */
-        ch_cn_abort_one_message(remote, reason);
-    }
     /* finish vs abort - finish: cancel a message on the current connection.
      * abort: means canceling a message that hasn't been queued yet. If
      * possible we don't want to cancel a message that hasn't been queued
      * yet.*/
+    if (wam == NULL && msg == NULL && remote != NULL) {
+        /* If we have not finished a message we abort one on the remote. */
+        ch_cn_abort_one_message(remote, reason);
+    }
+#ifndef CH_WITHOUT_TLS
     if (conn->flags & CH_CN_ENCRYPTED && conn->flags & CH_CN_INIT_ENCRYPTION) {
         int tmp_err = SSL_get_verify_result(conn->ssl);
         if (tmp_err != X509_V_OK) {
@@ -7676,6 +7796,7 @@ ch_cn_shutdown(ch_connection_t* conn, int reason)
                (void*) conn);
         }
     }
+#endif
     if (ichirp->flags & CH_CHIRP_CLOSING) {
         conn->flags |= CH_CN_DO_CLOSE_ACCOUTING;
         ichirp->closing_tasks += 1;
@@ -7686,7 +7807,11 @@ ch_cn_shutdown(ch_connection_t* conn, int reason)
 
 // .. c:function::
 void
-ch_cn_write(ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback)
+ch_cn_write(
+        ch_connection_t* conn,
+        const uv_buf_t   bufs[],
+        unsigned int     nbufs,
+        uv_write_cb      callback)
 //    :noindex:
 //
 //    see: :c:func:`ch_cn_write`
@@ -7694,32 +7819,44 @@ ch_cn_write(ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback)
 // .. code-block:: cpp
 //
 {
-    ch_chirp_t* chirp = conn->chirp;
-    A(conn->write_size == 0, "Another connection write is pending");
+    size_t buf_list_size = sizeof(uv_buf_t) * nbufs;
+    if (nbufs > conn->bufs_size) {
+        conn->bufs      = ch_realloc(conn->bufs, buf_list_size);
+        conn->bufs_size = nbufs;
+    }
+    memcpy(conn->bufs, bufs, buf_list_size);
+#ifndef CH_WITHOUT_TLS
     if (conn->flags & CH_CN_ENCRYPTED) {
         conn->write_callback = callback;
-        conn->write_buffer   = buf;
-        conn->write_size     = size;
         conn->write_written  = 0;
+        conn->bufs_index     = 0;
+        conn->nbufs          = nbufs;
 #ifdef CH_ENABLE_ASSERTS
+        A(!(conn->flags & CH_CN_ENCRYPTED_WRITE), "Encrypted write pending");
+        conn->flags |= CH_CN_ENCRYPTED_WRITE;
         int pending = BIO_pending(conn->bio_app);
         A(pending == 0, "There is still pending data in SSL BIO");
 #endif
         _ch_cn_partial_write(conn);
-    } else {
-        conn->buffer_any_uv = uv_buf_init(buf, size);
-        uv_write(
-                &conn->write_req,
-                (uv_stream_t*) &conn->client,
-                &conn->buffer_any_uv,
-                1,
-                callback);
+        return;
+    }
+#endif
+    uv_write(
+            &conn->write_req,
+            (uv_stream_t*) &conn->client,
+            conn->bufs,
+            nbufs,
+            callback);
+#ifdef CH_ENABLE_LOGGING
+    ch_chirp_t* chirp = conn->chirp;
+    for (unsigned int i = 0; i < nbufs; i++) {
         LC(chirp,
-           "Called uv_write with %d bytes. ",
+           "Wrote %d bytes. ",
            "ch_connection_t:%p",
-           (int) size,
+           (int) conn->bufs[i].len,
            (void*) conn);
     }
+#endif
 }
 // ==========
 // Encryption
@@ -7733,6 +7870,7 @@ ch_cn_write(ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback)
 //
 /* #include "encryption.h" */
 /* #include "chirp.h" */
+/* #include "common.h" */
 /* #include "util.h" */
 
 // System includes
@@ -7740,6 +7878,7 @@ ch_cn_write(ch_connection_t* conn, void* buf, size_t size, uv_write_cb callback)
 //
 // .. code-block:: cpp
 //
+#ifndef CH_WITHOUT_TLS
 #include <openssl/conf.h>
 #include <openssl/crypto.h>
 #include <openssl/engine.h>
@@ -7844,6 +7983,7 @@ _ch_en_locking_function(int mode, int n, const char* file, int line)
     }
 }
 #endif // CH_OPENSSL_10_API
+#endif // CH_WITHOUT_TLS
 
 // .. c:function::
 CH_EXPORT
@@ -7856,6 +7996,7 @@ ch_en_tls_init(void)
 // .. code-block:: cpp
 //
 {
+#ifndef CH_WITHOUT_TLS
     if (_ch_en_manual_tls) {
         return CH_SUCCESS;
     }
@@ -7880,6 +8021,9 @@ ch_en_tls_init(void)
     }
     return CH_SUCCESS;
 #endif
+#else  // CH_WITHOUT_TLS
+    return CH_SUCCESS;
+#endif // CH_WITHOUT_TLS
 }
 
 // .. c:function::
@@ -7893,6 +8037,7 @@ ch_en_tls_cleanup(void)
 // .. code-block:: cpp
 //
 {
+#ifndef CH_WITHOUT_TLS
     if (_ch_en_manual_tls) {
         return CH_SUCCESS;
     }
@@ -7915,6 +8060,9 @@ ch_en_tls_cleanup(void)
     ASN1_STRING_TABLE_cleanup();
 
     return ch_en_tls_threading_cleanup();
+#else // CH_WITHOUT_TLS
+    return CH_SUCCESS;
+#endif
 }
 
 // .. c:function::
@@ -7928,6 +8076,7 @@ ch_en_tls_threading_cleanup(void)
 // .. code-block:: cpp
 //
 {
+#ifndef CH_WITHOUT_TLS
 #ifdef CH_OPENSSL_10_API
     A(_ch_en_lock_list, "Threading not setup");
     if (!_ch_en_lock_list) {
@@ -7947,6 +8096,7 @@ ch_en_tls_threading_cleanup(void)
 #else
     OPENSSL_thread_stop();
 #endif // CH_OPENSSL_10_API
+#endif // CH_WITHOUT_TLS
     return CH_SUCCESS;
 }
 
@@ -7961,6 +8111,7 @@ ch_en_tls_threading_setup(void)
 // .. code-block:: cpp
 //
 {
+#ifndef CH_WITHOUT_TLS
 #ifdef CH_OPENSSL_10_API
     A(!_ch_en_lock_list, "Threading already setup");
     if (_ch_en_lock_list) {
@@ -7989,6 +8140,7 @@ ch_en_tls_threading_setup(void)
     CRYPTO_set_id_callback(_ch_en_thread_id_function);
     CRYPTO_set_locking_callback(_ch_en_locking_function);
 #endif // CH_OPENSSL_10_API
+#endif // CH_WITHOUT_TLS
     return CH_SUCCESS;
 }
 
@@ -8003,9 +8155,12 @@ ch_en_set_manual_tls_init(void)
 // .. code-block:: cpp
 //
 {
+#ifndef CH_WITHOUT_TLS
     _ch_en_manual_tls = 1;
+#endif
 }
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 ch_error_t
 ch_en_start(ch_encryption_t* enc)
@@ -8154,6 +8309,7 @@ _ch_en_thread_id_function(void)
     return (unsigned long) self;
 }
 #endif // CH_OPENSSL_10_API
+#endif // CH_WITHOUT_TLS
 // =======
 // Message
 // =======
@@ -8352,7 +8508,9 @@ ch_msg_set_data(ch_message_t* message, ch_buf* data, uint32_t len)
 //
 // .. code-block:: cpp
 //
+#ifndef CH_WITHOUT_TLS
 #include <openssl/err.h>
+#endif
 
 // Declarations
 // ============
@@ -8366,6 +8524,7 @@ _ch_pr_abort_all_messages(ch_remote_t* remote, ch_error_t error);
 //    :param ch_remote_t* remote: Remote failed to connect.
 //    :param ch_error_t error: Status returned by connect.
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static int
 _ch_pr_decrypt_feed(ch_connection_t* conn, ch_buf* buf, size_t read, int* stop);
@@ -8376,7 +8535,10 @@ _ch_pr_decrypt_feed(ch_connection_t* conn, ch_buf* buf, size_t read, int* stop);
 //    :param ch_buf* buf:           The buffer containing ``read`` bytes read.
 //    :param size_t read:           The number of bytes read.
 //    :param int* stop:             (Out) Stop the reading process.
+//
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_pr_do_handshake(ch_connection_t* conn);
@@ -8385,6 +8547,8 @@ _ch_pr_do_handshake(ch_connection_t* conn);
 //
 //    :param ch_connection_t* conn: Pointer to a connection handle.
 //
+#endif
+
 // .. c:function::
 static void
 _ch_pr_gc_connections_cb(uv_timer_t* handle);
@@ -8497,6 +8661,7 @@ _ch_pr_abort_all_messages(ch_remote_t* remote, ch_error_t error)
     remote->cntl_msg_queue = NULL;
 }
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static void
 _ch_pr_do_handshake(ch_connection_t* conn)
@@ -8530,6 +8695,8 @@ _ch_pr_do_handshake(ch_connection_t* conn)
     }
     ch_cn_send_if_pending(conn);
 }
+#endif
+
 // .. c:function::
 static void
 _ch_pr_gc_connections_cb(uv_timer_t* handle)
@@ -8578,19 +8745,23 @@ _ch_pr_gc_connections_cb(uv_timer_t* handle)
     ch_rm_st_pop(&rm_del_stack, &remote);
     while (remote != NULL) {
         _ch_pr_abort_all_messages(remote, CH_SHUTDOWN);
-        if (remote->conn != NULL) {
+        ch_rm_delete_node(&protocol->remotes, remote);
+        ch_connection_t* conn = remote->conn;
+        if (conn != NULL) {
             LC(chirp,
                "Garbage-collecting: shutdown.",
                "ch_connection_t:%p",
                remote->conn);
-            remote->flags = CH_RM_CONN_BLOCKED;
+            conn->delete_remote = remote;
+            remote->flags       = CH_RM_CONN_BLOCKED;
             ch_cn_shutdown(remote->conn, CH_SHUTDOWN);
         }
         LC(chirp, "Garbage-collecting: deleting.", "ch_remote_t:%p", remote);
-        ch_rm_delete_node(&protocol->remotes, remote);
         tmp_remote = remote;
         ch_rm_st_pop(&rm_del_stack, &remote);
-        ch_rm_free(tmp_remote);
+        if (conn == NULL) {
+            ch_rm_free(tmp_remote);
+        }
     }
     uint64_t start = (config->REUSE_TIME * 1000 / 2);
     start += rand() % start;
@@ -8666,9 +8837,11 @@ _ch_pr_new_connection_cb(uv_stream_t* server, int status)
             memcpy(&conn->address, &saddr->sin_addr, sizeof(saddr->sin_addr));
             uv_ip4_name(saddr, taddr.data, sizeof(taddr.data));
         }
+#ifndef CH_WITHOUT_TLS
         if (!(ichirp->config.DISABLE_ENCRYPTION || ch_is_local_addr(&taddr))) {
             conn->flags |= CH_CN_ENCRYPTED;
         }
+#endif
         ch_pr_conn_start(chirp, conn, client, 1);
     } else {
         ch_cn_shutdown(conn, CH_FATAL);
@@ -8823,6 +8996,9 @@ ch_pr_conn_start(
 
     uv_read_start(
             (uv_stream_t*) client, ch_cn_read_alloc_cb, _ch_pr_read_data_cb);
+#ifdef CH_WITHOUT_TLS
+    (void) (accept);
+#else
     if (conn->flags & CH_CN_ENCRYPTED) {
         if (accept) {
             SSL_set_accept_state(conn->ssl);
@@ -8831,10 +9007,11 @@ ch_pr_conn_start(
             _ch_pr_do_handshake(conn);
         }
         conn->flags |= CH_CN_TLS_HANDSHAKE;
-    } else {
-        int stop;
-        ch_rd_read(conn, NULL, 0, &stop); /* Start reader */
+        return CH_SUCCESS;
     }
+#endif
+    int stop;
+    ch_rd_read(conn, NULL, 0, &stop); /* Start reader */
     return CH_SUCCESS;
 }
 
@@ -8867,13 +9044,16 @@ ch_pr_close_free_remotes(ch_chirp_t* chirp, int only_conns)
     } else {
         while (protocol->remotes != ch_rm_nil_ptr) {
             ch_remote_t* remote = protocol->remotes;
-            /* Leaves the queue empty and there prevents reconnects. */
+            /* Leaves the queue empty and therefor prevents reconnects. */
             _ch_pr_abort_all_messages(remote, CH_SHUTDOWN);
-            if (remote->conn != NULL) {
-                ch_cn_shutdown(remote->conn, CH_SHUTDOWN);
-            }
             ch_rm_delete_node(&protocol->remotes, remote);
-            ch_rm_free(remote);
+            ch_connection_t* conn = remote->conn;
+            if (conn != NULL) {
+                conn->delete_remote = remote;
+                ch_cn_shutdown(conn, CH_SHUTDOWN);
+            } else {
+                ch_rm_free(remote);
+            }
         }
         /* Remove all remotes, sync with reconnect_remotes */
         protocol->reconnect_remotes = NULL;
@@ -8911,6 +9091,7 @@ ch_pr_debounce_connection(ch_connection_t* conn)
     }
 }
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 static int
 _ch_pr_decrypt_feed(ch_connection_t* conn, ch_buf* buf, size_t nread, int* stop)
@@ -8953,7 +9134,9 @@ _ch_pr_decrypt_feed(ch_connection_t* conn, ch_buf* buf, size_t nread, int* stop)
     } while (bytes_handled < nread);
     return bytes_handled;
 }
+#endif
 
+#ifndef CH_WITHOUT_TLS
 // .. c:function::
 void
 ch_pr_decrypt_read(ch_connection_t* conn, int* stop)
@@ -9006,6 +9189,7 @@ ch_pr_decrypt_read(ch_connection_t* conn, int* stop)
         ch_cn_shutdown(conn, CH_TLS_ERROR);
     }
 }
+#endif
 
 // .. c:function::
 void
@@ -9084,6 +9268,7 @@ _ch_pr_resume(ch_connection_t* conn)
 // .. code-block:: cpp
 //
 {
+#ifndef CH_WITHOUT_TLS
     if (conn->flags & CH_CN_ENCRYPTED) {
         int stop;
         int ret = _ch_pr_read_resume(conn, &conn->tls_resume);
@@ -9103,9 +9288,9 @@ _ch_pr_resume(ch_connection_t* conn)
             _ch_pr_update_resume(resume, buf, nread, bytes_handled);
         }
         return !stop;
-    } else {
-        return _ch_pr_read_resume(conn, &conn->read_resume);
     }
+#endif
+    return _ch_pr_read_resume(conn, &conn->read_resume);
 }
 
 // .. c:function::
@@ -9157,11 +9342,15 @@ _ch_pr_read_data_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
        (int) nread,
        (void*) conn);
     int stop;
+#ifndef CH_WITHOUT_TLS
     if (conn->flags & CH_CN_ENCRYPTED) {
         bytes_handled = _ch_pr_decrypt_feed(conn, buf->base, nread, &stop);
     } else {
+#endif
         bytes_handled = ch_rd_read(conn, buf->base, nread, &stop);
+#ifndef CH_WITHOUT_TLS
     }
+#endif
     if (stop) {
         _ch_pr_update_resume(
                 &conn->read_resume, buf->base, nread, bytes_handled);
@@ -9308,7 +9497,7 @@ _ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read);
 //    :param ch_buf* buf:           Buffer containing bytes read, acts as data
 //                                  source
 //    :param size_t read:           Count of bytes read
-//
+
 // .. c:function::
 static void
 _ch_rd_handshake_cb(uv_write_t* req, int status);
@@ -9571,6 +9760,7 @@ _ch_rd_handshake_cb(uv_write_t* req, int status)
         ch_cn_shutdown(conn, CH_WRITE_ERROR);
         return;
     }
+#ifndef CH_WITHOUT_TLS
     /* Check if we already have a message (just after handshake)
      * this is here so we have no overlapping ch_cn_write. If the read causes a
      * ack message to be sent and the write of the handshake is not finished,
@@ -9579,6 +9769,7 @@ _ch_rd_handshake_cb(uv_write_t* req, int status)
         int stop;
         ch_pr_decrypt_read(conn, &stop);
     }
+#endif
 }
 
 static ssize_t
@@ -9670,7 +9861,10 @@ _ch_rd_read_step(
         hs_tmp.port = ichirp->public_port;
         memcpy(hs_tmp.identity, ichirp->identity, CH_ID_SIZE);
         ch_sr_hs_to_buf(&hs_tmp, hs_buf);
-        ch_cn_write(conn, hs_buf, CH_SR_HANDSHAKE_SIZE, _ch_rd_handshake_cb);
+        uv_buf_t buf;
+        buf.base = hs_buf;
+        buf.len  = CH_SR_HANDSHAKE_SIZE;
+        ch_cn_write(conn, &buf, 1, _ch_rd_handshake_cb);
         reader->state = CH_RD_HANDSHAKE;
         break;
     }
@@ -10678,12 +10872,17 @@ ch_write_log(
 //
 /* #include "writer.h" */
 /* #include "chirp.h" */
+/* #include "common.h" */
 /* #include "protocol.h" */
 /* #include "remote.h" */
 /* #include "util.h" */
 
 // Declarations
 // ============
+//
+// .. code-block:: cpp
+
+MINMAX_FUNCS(uint64_t)
 
 // .. c:function::
 static int
@@ -10738,22 +10937,6 @@ _ch_wr_connect_timeout_cb(uv_timer_t* handle);
 
 // .. c:function::
 static void
-_ch_wr_write_chirp_header_cb(uv_write_t* req, int status);
-//
-//    Callback which is called after the messages header was written.
-//
-//    The successful sending of a message over a connection triggers the
-//    message header callback, which, in its turn, then calls this callback ---
-//    if a header is present.
-//
-//    Cancels (void) if the sending was erroneous. Next data will be written if
-//    the message has data.
-//
-//    :param uv_write_t* req:  Write request.
-//    :param int status:       Write status.
-
-// .. c:function::
-static void
 _ch_wr_write_data_cb(uv_write_t* req, int status);
 //
 //    Callback which is called after data was written.
@@ -10772,15 +10955,6 @@ _ch_wr_write_finish(
 //    :param ch_chirp_t* chirp:      Pointer to a chirp instance.
 //    :param ch_writer_t* writer:    Pointer to a writer instance.
 //    :param ch_connection_t* conn:  Pointer to a connection instance.
-
-// .. c:function::
-static void
-_ch_wr_write_msg_header_cb(uv_write_t* req, int status);
-//
-//    Callback which is called after the messages header was written.
-//
-//    :param uv_write_t* req:  Write request.
-//    :param int status:       Write status.
 
 // .. c:function::
 static void
@@ -10878,7 +11052,7 @@ _ch_wr_connect(ch_remote_t* remote)
     tmp_err = uv_timer_start(
             &conn->connect_timeout,
             _ch_wr_connect_timeout_cb,
-            ichirp->config.TIMEOUT * 1000,
+            ch_min_uint64_t(ichirp->config.TIMEOUT * 2000, 60000),
             0);
     if (tmp_err != CH_SUCCESS) {
         EC(chirp,
@@ -10896,9 +11070,11 @@ _ch_wr_connect(ch_remote_t* remote)
             remote->address,
             taddr.data,
             sizeof(taddr.data));
+#ifndef CH_WITHOUT_TLS
     if (!(ichirp->config.DISABLE_ENCRYPTION || ch_is_local_addr(&taddr))) {
         conn->flags |= CH_CN_ENCRYPTED;
     }
+#endif
     memcpy(&conn->address, &remote->address, CH_IP_ADDR_SIZE);
     if (uv_tcp_init(ichirp->loop, &conn->client) < 0) {
         EC(chirp,
@@ -11041,31 +11217,6 @@ _ch_wr_enqeue_probe_if_needed(ch_remote_t* remote)
 
 // .. c:function::
 static void
-_ch_wr_write_chirp_header_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_write_chirp_header_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_writer_t*  writer = &conn->writer;
-    ch_message_t* msg    = writer->msg;
-    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
-        return;
-    }
-    if (msg->data_len > 0) {
-        ch_cn_write(conn, msg->data, msg->data_len, _ch_wr_write_data_cb);
-    } else {
-        _ch_wr_write_finish(chirp, writer, conn);
-    }
-}
-
-// .. c:function::
-static void
 _ch_wr_write_data_cb(uv_write_t* req, int status)
 //    :noindex:
 //
@@ -11107,37 +11258,6 @@ _ch_wr_write_finish(
         conn->remote->timestamp = conn->timestamp;
     }
     ch_chirp_finish_message(chirp, conn, msg, CH_SUCCESS);
-}
-
-// .. c:function::
-static void
-_ch_wr_write_msg_header_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_wr_write_msg_header_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    ch_writer_t*  writer = &conn->writer;
-    ch_message_t* msg    = writer->msg;
-    if (_ch_wr_check_write_error(chirp, writer, conn, status)) {
-        return;
-    }
-    if (msg->header_len > 0) {
-        ch_cn_write(
-                conn,
-                msg->header,
-                msg->header_len,
-                _ch_wr_write_chirp_header_cb);
-    } else if (msg->data_len > 0) {
-        ch_cn_write(conn, msg->data, msg->data_len, _ch_wr_write_data_cb);
-    } else {
-        _ch_wr_write_finish(chirp, writer, conn);
-    }
 }
 
 // .. c:function::
@@ -11431,9 +11551,12 @@ ch_wr_write(ch_connection_t* conn, ch_message_t* msg)
 
     remote->serial += 1;
     ch_sr_msg_to_buf(msg, writer->net_msg, remote->serial);
-    ch_cn_write(
-            conn,
-            writer->net_msg,
-            CH_SR_WIRE_MESSAGE_SIZE,
-            _ch_wr_write_msg_header_cb);
+    uv_buf_t buf[3];
+    buf[0].base = writer->net_msg;
+    buf[0].len  = CH_SR_WIRE_MESSAGE_SIZE;
+    buf[1].base = msg->header;
+    buf[1].len  = msg->header_len;
+    buf[2].base = msg->data;
+    buf[2].len  = msg->data_len;
+    ch_cn_write(conn, buf, 3, _ch_wr_write_data_cb);
 }

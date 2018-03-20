@@ -433,7 +433,8 @@ typedef void (*ch_log_cb_t)(char msg[], char error);
 //
 //    .. c:member:: int status
 //
-//       Error code: CH_SUCCESS, CH_TIMEOUT, CH_CANNOT_CONNECT TODO update
+//       Error code: CH_SUCCESS, CH_TIMEOUT, CH_CANNOT_CONNECT, CH_TLS_ERROR,
+//       CH_WRITE_ERROR, CH_SHUTDOWN, CH_FATAL, CH_PROTOCOL_ERROR, CH_ENOMEM
 //
 // .. code-block:: cpp
 //
@@ -898,12 +899,14 @@ ch_run(uv_loop_t* loop);
 //    .. c:member:: float REUSE_TIME
 //
 //       Time until a connection gets garbage collected. Until then the
-//       connection will be reused.
+//       connection will be reused. Actual reuse time will be
+//       max(REUSE_TIME, TIMEOUT * 3).
 //
 //    .. c:member:: float TIMEOUT
 //
-//       IO related timeout in seconds: Sending messages, connecting to
-//       remotes.
+//       Send- and connect-timeout scaling in seconds. Send-timeout will be
+//       TIMEOUT seconds. Connect-timeout will be min(TIMEOUT * 2, 60)
+//       seconds.
 //
 //    .. c:member:: uint16_t PORT
 //
@@ -1264,7 +1267,8 @@ CH_EXPORT
 void
 ch_chirp_set_always_encrypt(void);
 //
-//    Also encrypt local connections.
+//    Also encrypt local connections. This is set globally to all chirp
+//    instances.
 
 // .. c:function::
 CH_EXPORT
@@ -1322,7 +1326,8 @@ ch_chirp_set_recv_callback(ch_chirp_t* chirp, ch_recv_cb_t recv_cb);
 // ==========
 //
 // Interface for manual or fine-grained encryption setup: Only use if you know
-// what you are doing.
+// what you are doing. All functions become no-ops if CH_WITHOUT_TLS is
+// defined.
 //
 // .. code-block:: cpp
 
@@ -1337,7 +1342,8 @@ CH_EXPORT
 ch_error_t
 ch_en_tls_init(void);
 //
-//    Initialize LibreSSL or OpenSSL according to configuration.
+//    Initialize LibreSSL or OpenSSL according to configuration. Is a no-op if
+//    CH_WITHOUT_TLS is defined.
 //
 //   :return: A chirp error. see: :c:type:`ch_error_t`
 //   :rtype:  ch_error_t
@@ -1347,7 +1353,7 @@ CH_EXPORT
 ch_error_t
 ch_en_tls_cleanup(void);
 //
-//    Cleanup LibreSSL or OpenSSL.
+//    Cleanup LibreSSL or OpenSSL. Is a no-op if CH_WITHOUT_TLS is defined.
 //
 //   :return: A chirp error. see: :c:type:`ch_error_t`
 //   :rtype:  ch_error_t
@@ -1360,7 +1366,7 @@ ch_en_tls_threading_cleanup(void);
 //    DO NOT USE, unless you really really know what you are doing. Provided
 //    for the rare case where your host application initializes libressl or
 //    openssl without threading support, but you need threading. Chirp usually
-//    doesn't need threading.
+//    doesn't need threading. Is a no-op if CH_WITHOUT_TLS is defined.
 //
 //    Cleanup libressl or openssl threading by setting destroying the locks and
 //    freeing memory.
@@ -1374,7 +1380,7 @@ ch_en_tls_threading_setup(void);
 //    DO NOT USE, unless you really really know what you are doing. Provided
 //    for the rare case where your host application initializes openssl without
 //    threading support, but you need threading. Chirp usually doesn't need
-//    threading.
+//    threading. Is a no-op if CH_WITHOUT_TLS is defined.
 //
 //    Setup openssl threading by initializing the required locks and setting
 //    the lock and the thread_id callbacks.
@@ -1385,7 +1391,8 @@ CH_EXPORT
 void
 ch_en_set_manual_tls_init(void);
 //
-//    Manually initialize LibreSSL or OpenSSL.
+//    Manually initialize LibreSSL or OpenSSL. Is a no-op if CH_WITHOUT_TLS is
+//    set.
 //
 //    By default chirp will initialize libressl or openssl on the first
 //    instance of chirp and cleanup libressl or openssl on the last instance of
