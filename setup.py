@@ -28,7 +28,7 @@ python-chirp
 
 Message-passing for everyone
 
-BETA-RELEASE: 1.0.0
+BETA-RELEASE: 1.1.0
 ===================
 
 https://github.com/concretecloud/python-chirp

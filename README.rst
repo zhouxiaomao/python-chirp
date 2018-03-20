@@ -30,7 +30,7 @@ Supported by |adsy|
 .. |adsy| image:: https://1042.ch/ganwell/adsy-logo.svg
    :target: https://adfinis-sygroup.ch/
 
-BETA-RELEASE: 1.0.0
+BETA-RELEASE: 1.1.0
 ===================
 
 Features
@@ -88,3 +88,49 @@ setup.py
 
    pip install cffi
    python setup.py install
+
+
+Changes
+=======
+
+2018-03-20 - 1.1.0b0
+-----------------------
+
+* Update to libchirp.c 1.1.0-beta
+
+License
+=======
+
+libchirp is subject to the terms of the Mozilla Public License, v. 2.0. Creating
+a "Larger Work" under the GNU (Lesser) General Public License is explicitly
+allowed. Contributors to libchirp must agree to the Mozilla Public License, v.
+2.0.
+
+Contributing
+============
+
+Please open an issue first. Contributions of missing features are very welcome, but
+we want to keep to scope of libchirp minimal, so additional features should
+probably be implemented in an upper layer.
+
+Most valuable contributions:
+
+* Use it and report issues
+
+* Fix documentation
+
+* Promote libchirp
+
+* Contribute any kind of tests or fuzzing (if possible hypothesis_ based)
+
+* Make bindings for your favorite language
+
+* Make packages for your favorite distribution
+
+* A uvloop_ based implementation, see also issue_
+
+.. _uvloop: https://github.com/MagicStack/uvloop
+
+.. _issue: https://github.com/MagicStack/uvloop/issues/52
+
+.. _hypothesis: https://hypothesis.readthedocs.io/en/latest/
