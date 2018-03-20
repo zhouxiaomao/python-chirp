@@ -329,7 +329,8 @@ class Config(object):
     def REUSE_TIME(self):
         """Get the time until a connection gets garbage collected.
 
-        Until then the connection will be reused. (float)
+        Until then the connection will be reused. Actual reuse time will be
+        max(REUSE_TIME, TIMEOUT * 3). (float)
 
         :rtype: float
         """
@@ -342,9 +343,10 @@ class Config(object):
 
     @property
     def TIMEOUT(self):
-        """Get IO related timeout in seconds.
+        """Get send- and connect-timeout scaling in seconds.
 
-        Sending messages, connecting to remotes. (float)
+        Send-timeout will be TIMEOUT seconds. Connect-timeout will be
+        min(TIMEOUT * 2, 60) seconds. (float)
 
         :rtype: float
         """
@@ -352,7 +354,7 @@ class Config(object):
 
     @TIMEOUT.setter
     def TIMEOUT(self, value):
-        """Get IO related timeout in seconds."""
+        """Set send- and connect-timeout scaling in seconds."""
         self._setattr_ffi('TIMEOUT', value)
 
 

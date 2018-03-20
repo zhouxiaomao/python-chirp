@@ -16,6 +16,17 @@ def test_value_error(loop, config):
         ChirpBase(loop, config)
 
 
+def test_too_high_timeout(loop, config):
+    """test_lifecycle."""
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    config.TIMEOUT = 1201
+    try:
+        ChirpBase(loop, config)
+    except ValueError as e:
+        assert "Config: timeout must be <= 1200." in e.args[0]
+
+
 def test_lifecycle(config):
     """test_lifecycle."""
     loop = Loop()
