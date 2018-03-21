@@ -12,15 +12,17 @@ update_delay = 1
 
 peers = set()
 infos = dict()
+myip = None
+myid = uuid.uuid4().hex
 
 def cmd(*args):
     return check_output(args).strip().decode("UTF-8")
 
 def get_info():
     return [
-        uuid.getnode(),
+        myid,
         time.time(),
-        None,
+        myip,
         cmd("uname", "-r"),
         cmd("uptime")
     ]
@@ -35,9 +37,10 @@ class MyChirp(Chirp):
         try:
             peers.add(msg.address)
             info = json.loads(msg.data, encoding="UTF-8")
+            if info[0] == myid:
+                myip = info[3]
             if info[2] is None:
                 info[2] = msg.address
-                info[1] += 1
             old_info = infos.get(info[0])
             if old_info is None or info[1] > old_info[1]:
                 infos[info[0]] = info
@@ -59,7 +62,6 @@ class MyChirp(Chirp):
                     try:
                         await self.send(msg)
                     except Exception:
-                        import ipdb; ipdb.set_trace()
                         pass
                 await asyncio.sleep(update_delay)
             except Exception as e:
