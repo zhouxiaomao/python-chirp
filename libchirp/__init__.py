@@ -782,9 +782,9 @@ def _chirp_log_cb(msg, error):
     emsg = ffi.string(msg).decode("UTF-8")
     if error[0]:
         _last_error.data = emsg
-        _l.warning(emsg)
-    else:
         _l.debug(emsg)
+    else:
+        _l.info(emsg)
 
 
 @ffi.def_extern()
