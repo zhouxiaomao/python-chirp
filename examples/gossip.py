@@ -13,7 +13,7 @@ update_delay = 1
 peers = set()
 infos = dict()
 myip = None
-myid = uuid.uuid4().hex
+myid = uuid.getnode()
 
 def cmd(*args):
     return check_output(args).strip().decode("UTF-8")
@@ -34,11 +34,12 @@ def print_info():
 
 class MyChirp(Chirp):
     async def handler(self, msg):
+        global myip
         try:
             peers.add(msg.address)
             info = json.loads(msg.data, encoding="UTF-8")
             if info[0] == myid:
-                myip = info[3]
+                myip = info[2]
             if info[2] is None:
                 info[2] = msg.address
             old_info = infos.get(info[0])
