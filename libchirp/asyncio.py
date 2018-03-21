@@ -29,6 +29,8 @@ class Message(MessageThread):
         message is released. If the message had no slot, the result will be set
         to None.
 
+        May only be used from asyncio-event-loop-thread.
+
         :rtype: asyncio.Future
         """
         return asyncio.wrap_future(MessageThread.release_slot(self))
@@ -96,6 +98,8 @@ class Chirp(ChirpBase):
         :py:class:`Exception` for unknown errors. See :ref:`exceptions`.
 
         See also :ref:`concurrency`.
+
+        May only be used from asyncio-event-loop-thread.
 
         :param libchirp.asyncio.Message msg: The message to send.
         :rtype: asyncio.Future

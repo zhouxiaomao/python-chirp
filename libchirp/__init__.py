@@ -612,6 +612,11 @@ class MessageThread(MessageBase):
         message is released. If the message had no slot, the result will be set
         to None.
 
+        Releasing a message from a different thread is thread-safe. Releasing
+        the same message from different threads twice will lead to undefined
+        behavior. Releasing, waiting for the result, switching thread,
+        releasing... is fine, tough.
+
         :rtype: Future
         """
         chirp = self._chirp
@@ -982,6 +987,11 @@ class ChirpBase(object):
         :py:class:`Exception` for unknown errors. See :ref:`exceptions`.
 
         See also :ref:`concurrency`.
+
+        Sending different messages from different threads is thread-safe.
+        Sending the same message twice from different threads will lead to
+        undefined behavior. Sending, waiting for the result, switching thread,
+        sending... is fine, tough.
 
         :param MessageThread msg: The message to send.
         :rtype: concurrent.futures.Future
