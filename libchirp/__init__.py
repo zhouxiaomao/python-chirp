@@ -614,8 +614,8 @@ class MessageThread(MessageBase):
 
         Releasing a message from a different thread is thread-safe. Releasing
         the same message from different threads twice will lead to undefined
-        behavior. Releasing, waiting for the result, switching thread,
-        releasing... is fine, tough.
+        behavior. Releasing, waiting for the result, switching the thread
+        synchronized (via queue for example), releasing is fine, tough.
 
         :rtype: Future
         """
@@ -990,8 +990,8 @@ class ChirpBase(object):
 
         Sending different messages from different threads is thread-safe.
         Sending the same message twice from different threads will lead to
-        undefined behavior. Sending, waiting for the result, switching thread,
-        sending... is fine, tough.
+        undefined behavior. Sending, waiting for the result, switching the
+        thread synchronized (via queue for example), sending is fine, tough.
 
         :param MessageThread msg: The message to send.
         :rtype: concurrent.futures.Future
