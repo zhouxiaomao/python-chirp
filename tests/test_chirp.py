@@ -5,7 +5,7 @@ import pytest
 import time
 import os
 
-from libchirp import ChirpBase, Loop, MessageThread
+from libchirp import ChirpBase, Loop, MessageThread, lib
 
 _echo_test = os.path.exists("./echo_test")
 
@@ -34,6 +34,7 @@ def test_lifecycle(config):
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     a = ChirpBase(loop, config)
+    assert a.identity != b'\0' * lib.CH_ID_SIZE
     assert len(gc.get_referrers(a)) > 1
     a.stop()
     assert len(gc.get_referrers(a)) == 1

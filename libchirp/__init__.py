@@ -1012,3 +1012,8 @@ class ChirpBase(object):
         msg._copy_to_c()
         lib.ch_chirp_send_ts(self._chirp_t, msg_t, lib._send_cb)
         return fut
+
+    def identity(self):
+        return ffi.buffer(
+            lib.ch_chirp_get_identity(self._chirp_t).data
+        )[:]

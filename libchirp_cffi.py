@@ -282,6 +282,13 @@ ch_loop_close(uv_loop_t* loop);
 
 ch_error_t
 ch_chirp_send_ts(ch_chirp_t* chirp, ch_message_t* msg, ch_send_cb_t send_cb);
+
+typedef struct ch_identity_s {
+    uint8_t data[CH_ID_SIZE];
+} ch_identity_t;
+
+ch_identity_t
+ch_chirp_get_identity(ch_chirp_t* chirp);
 """
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "debug":

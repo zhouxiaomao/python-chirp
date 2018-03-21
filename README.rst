@@ -30,7 +30,7 @@ Supported by |adsy|
 .. |adsy| image:: https://1042.ch/ganwell/adsy-logo.svg
    :target: https://adfinis-sygroup.ch/
 
-BETA-RELEASE: 1.1.0
+BETA-RELEASE: 1.1.2
 ===================
 
 Features
@@ -93,10 +93,21 @@ setup.py
 Changes
 =======
 
-2018-03-20 - 1.1.0b0
------------------------
+2018-03-20 - 1.1.1b0
+---------------------
 
 * Update to libchirp.c 1.1.0-beta
+
+2018-03-21 - 1.1.2b0
+--------------------
+
+* Update to libchirp.c 1.1.1-beta
+
+  * Fixes deadlock in send
+
+  * Fixes bug when disabling signals
+
+* Disable signals
 
 License
 =======

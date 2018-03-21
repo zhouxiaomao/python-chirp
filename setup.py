@@ -20,7 +20,7 @@ try:
     setup(
         name="libchirp",
         version=__version__,
-        description="Message-passing for everyone.",
+        description="Message-passing for everyone",
         long_description="""
 ============
 python-chirp
@@ -28,7 +28,7 @@ python-chirp
 
 Message-passing for everyone
 
-BETA-RELEASE: 1.1.0
+BETA-RELEASE: 1.1.2
 ===================
 
 https://github.com/concretecloud/python-chirp
