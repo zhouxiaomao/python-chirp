@@ -624,7 +624,7 @@ class MessageThread(MessageBase):
         if chirp:
             with chirp._lock:
                 if self.has_slot:
-                    msg_t =  self._msg_t
+                    msg_t = self._msg_t
                     self._msg_t = None
                     fut = chirp._release_msgs[(self.identity, self.serial)][0]
                     doit = True
