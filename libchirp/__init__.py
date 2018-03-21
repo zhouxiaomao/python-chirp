@@ -615,13 +615,18 @@ class MessageThread(MessageBase):
         :rtype: Future
         """
         chirp = self._chirp
-        if self.has_slot and chirp:
+        doit = False
+        if chirp:
             with chirp._lock:
-                fut = chirp._release_msgs[(self.identity, self.serial)][0]
+                if self.has_slot:
+                    msg_t =  self._msg_t
+                    self._msg_t = None
+                    fut = chirp._release_msgs[(self.identity, self.serial)][0]
+                    doit = True
+        if doit:
             lib.ch_chirp_release_msg_slot_ts(
-                chirp._chirp_t, self._msg_t, lib._release_cb
+                chirp._chirp_t, msg_t, lib._release_cb
             )
-            self._msg_t = None
             return fut
         fut = Future()
         fut.set_result(None)
@@ -983,9 +988,9 @@ class ChirpBase(object):
         """
         assert isinstance(msg, MessageThread)
         fut = Future()
-        if msg._fut:
-            raise RuntimeError("Message already sending")
         with self._lock:
+            if msg._fut:
+                raise RuntimeError("Message already sending")
             msg._ensure_message()
             msg._fut = fut
             msg_t = msg._msg_t
