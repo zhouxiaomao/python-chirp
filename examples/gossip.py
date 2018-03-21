@@ -63,7 +63,7 @@ class MyChirp(Chirp):
                     try:
                         await self.send(msg)
                     except Exception:
-                        pass
+                        peers.remove(peer)
                 await asyncio.sleep(update_delay)
             except Exception as e:
                 print(e)
