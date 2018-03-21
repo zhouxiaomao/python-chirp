@@ -25,6 +25,11 @@ def get_info():
         cmd("uptime")
     ]
 
+def print_info():
+    print("\033[2J\033[1;1H")
+    for info in sorted(infos.values()):
+        print(", ".join([str(x) for x in info[2:]]))
+
 class MyChirp(Chirp):
     async def handler(self, msg):
         try:
@@ -32,9 +37,11 @@ class MyChirp(Chirp):
             info = json.loads(msg.data, encoding="UTF-8")
             if info[2] is None:
                 info[2] = msg.address
+                info[1] += 1
             old_info = infos.get(info[0])
-            if old_info and info[1] > old_info[1]:
+            if old_info is None or info[1] > old_info[1]:
                 infos[info[0]] = info
+                print_info()
         except Exception as e:
             print(e)
 
@@ -52,10 +59,8 @@ class MyChirp(Chirp):
                     try:
                         await self.send(msg)
                     except Exception:
+                        import ipdb; ipdb.set_trace()
                         pass
-                print("\033[2J\033[1;1H")
-                for info in sorted(infos.values()):
-                    print(", ".join([str(x) for x in info[2:]]))
                 await asyncio.sleep(update_delay)
             except Exception as e:
                 print(e)
