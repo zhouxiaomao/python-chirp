@@ -74,6 +74,8 @@ for arg in sys.argv[1:]:
 loop = Loop(); config = Config()
 config.DISABLE_ENCRYPTION = True
 config.SYNCHRONOUS = False
+config.TIMEOUT = 60
+config.REUSE_TIME = 120
 aio_loop = asyncio.get_event_loop()
 try:
     chirp = MyChirp(loop, config, aio_loop)
