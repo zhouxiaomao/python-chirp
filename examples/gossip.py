@@ -50,6 +50,13 @@ class MyChirp(Chirp):
         except Exception as e:
             print(e)
 
+
+    async def send_to_peer(self, peer, msg, remove_peers):
+        try:
+            await self.send(msg)
+        except Exception:
+            remove_peers.add(peer)
+
     async def update(self):
         while True:
             try:
@@ -57,16 +64,15 @@ class MyChirp(Chirp):
                 infos[info[0]] = info
                 print_info()
                 remove_peers = set()
+                wait = []
                 for peer in peers:
                     info = random.choice(list(infos.values()))
                     msg = Message()
                     msg.port = config.PORT
                     msg.address = peer
                     msg.data = json.dumps(info).encode("UTF-8")
-                    try:
-                        await self.send(msg)
-                    except Exception:
-                        remove_peers.add(peer)
+                    wait.append(self.send_to_peer(peer, msg, remove_peers))
+                await asyncio.gather(*wait, return_exceptions=True)
                 for peer in remove_peers:
                     peers.remove(peer)
                 remove_info = set()
@@ -86,7 +92,7 @@ for arg in sys.argv[1:]:
 loop = Loop(); config = Config()
 config.DISABLE_ENCRYPTION = True
 config.SYNCHRONOUS = False
-config.TIMEOUT = 60
+config.TIMEOUT = 10
 config.REUSE_TIME = 120
 aio_loop = asyncio.get_event_loop()
 try:
