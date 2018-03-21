@@ -8,7 +8,7 @@ import sys
 here = os.environ.get("LICHIRP_HERE") or path.abspath(path.dirname(__file__))
 static = os.environ.get("LIBCHIRP_STATIC") == "True"
 
-comp = []
+comp = ["-DCH_DISABLE_SIGNALS"]
 link = []
 libs = []
 libdirs = []
