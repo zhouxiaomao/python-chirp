@@ -8,7 +8,7 @@ from subprocess import check_output
 import sys
 import time
 
-update_delay = 60
+update_delay = 30
 
 peers = set()
 infos = dict()
@@ -54,6 +54,7 @@ class MyChirp(Chirp):
             try:
                 info = get_info()
                 infos[info[0]] = info
+                print_info()
                 for peer in peers:
                     info = random.choice(list(infos.values()))
                     msg = Message()
