@@ -55,6 +55,7 @@ class MyChirp(Chirp):
                 info = get_info()
                 infos[info[0]] = info
                 print_info()
+                remove_peers = set()
                 for peer in peers:
                     info = random.choice(list(infos.values()))
                     msg = Message()
@@ -64,10 +65,19 @@ class MyChirp(Chirp):
                     try:
                         await self.send(msg)
                     except Exception:
-                        peers.remove(peer)
-                await asyncio.sleep(update_delay)
+                        remove_peers.add(peer)
+                for peer in remove_peers:
+                    peers.remove(peer)
+                remove_info = set()
+                now = time.time()
+                for info in infos.values():
+                    if info[1] < (now - 3600):
+                        remove_info.add(info[0])
+                for info in remove_info:
+                    del infos[info]
             except Exception as e:
                 print(e)
+            await asyncio.sleep(update_delay)
 
 for arg in sys.argv[1:]:
     peers.add(ipaddress.ip_address(arg).compressed)
