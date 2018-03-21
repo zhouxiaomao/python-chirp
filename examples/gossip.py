@@ -45,6 +45,7 @@ class MyChirp(Chirp):
             old_info = infos.get(info[0])
             if old_info is None or info[1] > old_info[1]:
                 infos[info[0]] = info
+                peers.add(info[2])
                 print_info()
         except Exception as e:
             print(e)
