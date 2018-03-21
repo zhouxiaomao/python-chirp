@@ -28,7 +28,7 @@ def get_info():
     ]
 
 def print_info():
-    print("\033[2J\033[1;1H")
+    print("\033[2J\033[1;1HGossip")
     for info in sorted(infos.values()):
         print(", ".join([str(x) for x in info[2:]]))
 
