@@ -98,6 +98,7 @@ setup.py
             "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
             "Topic :: System :: Networking",
         ],
+        python_requires='>=3.4',
         packages=find_packages(),
         install_requires=["cffi>=1.0.0"],
         setup_requires=["cffi>=1.0.0"],
