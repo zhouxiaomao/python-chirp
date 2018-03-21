@@ -8,7 +8,7 @@ from subprocess import check_output
 import sys
 import time
 
-update_delay = 1
+update_delay = 60
 
 peers = set()
 infos = dict()
