@@ -42,6 +42,27 @@ def test_recv_msg(config, sender, message):
     a.stop()
 
 
+def test_ignore_msg(config, sender, message):
+    """test_ignore_msg."""
+    config = Config()
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    config.AUTO_RELEASE = True
+    aio_loop = asyncio.get_event_loop()
+    fut = asyncio.Future()
+
+    class MyChirp(Chirp):
+        pass
+
+    a = MyChirp(sender.loop, config, aio_loop)
+    message.data = b'hello'
+    message.address = "127.0.0.1"
+    message.port = config.PORT
+    fut = sender.send(message)
+    aio_loop.run_until_complete(asyncio.wrap_future(fut))
+    a.stop()
+
+
 def test_recv_await_release(config, sender, message):
     """test_recv_msg."""
     config = Config()

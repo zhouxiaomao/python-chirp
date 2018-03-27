@@ -19,7 +19,6 @@ class Message(MessageThread):  # noqa
        message use asserts to check if the value has the correct type, length,
        range. You can disable these with python -O.
     """
-
     pass
 
 
@@ -30,7 +29,10 @@ def _queue_recv_cb(chirp_t, msg_t):
     msg = Message(msg_t)
     chirp._register_msg(msg)
     msg._chirp = chirp
-    chirp.put(msg)
+    if chirp._disable_queue:
+        msg.release()
+    else:
+        chirp.put(msg)
 
 
 class Chirp(ChirpBase, Queue):
@@ -47,5 +49,20 @@ class Chirp(ChirpBase, Queue):
     """
 
     def __init__(self, loop, config):
+        self._disable_queue = False
         Queue.__init__(self)
         ChirpBase.__init__(self, loop, config, lib._queue_recv_cb)
+
+    @property
+    def disable_queue(self):
+        """Get if the queue is disabled.
+
+        If the queue is disabled no messages will be delivered to the queue and
+        the messages will always be released.
+        """
+        return self._disable_queue
+
+    @disable_queue.setter
+    def disable_queue(self, value):
+        """Set if the queue is disabled."""
+        self._disable_queue = value

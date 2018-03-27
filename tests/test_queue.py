@@ -32,6 +32,21 @@ def test_recv_msg(config, sender, message):
     a.stop()
 
 
+def test_disable_queue(config, sender, message):
+    """test_disable_queue."""
+    config = Config()
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    a = Chirp(sender.loop, config)
+    a.disable_queue = True
+    message.data = b'hello'
+    message.address = "127.0.0.1"
+    message.port = config.PORT
+    sender.send(message).result()
+    assert a.empty()
+    a.stop()
+
+
 def test_recv_msg_wait(config, sender, message):
     """test_recv_msg_wait."""
     config = Config()

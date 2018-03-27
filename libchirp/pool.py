@@ -71,6 +71,12 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
     def handler(self, msg):  # noqa
         """Called when a message arrives.
 
+        Please implement this method.
+
+        If you don't implement this chirp will release the message-slots
+        regardless of the AUTO_RELEASE setting.
+
         :param libchirp.pool.Message msg: The message
         """
-        pass
+        if not self._auto_release:
+            msg.release()
