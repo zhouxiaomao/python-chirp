@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Setup of libchirp."""
 
 import codecs
@@ -6,6 +6,10 @@ import sys
 import os
 from os import path
 from setuptools import setup, find_packages
+
+if sys.hexversion <= 0x3050000:
+    print("Install requires python 3.5+")
+    sys.exit(1)
 
 here = path.abspath(path.dirname(__file__))
 os.environ["LICHIRP_HERE"] = here
@@ -64,9 +68,11 @@ Dependencies
 .. code-block:: bash
 
    Alpine:       apk add python3-dev libffi-dev libressl-dev libuv-dev
+                 build-base
    Debian-based: apt install python3-dev libffi-dev libssl-dev libuv1-dev
-   Redhat-based: yum install python3-devel libffi-devel openssl-devel
-                 libuv-devel
+                 build-essential
+   RPM-based:    yum install python3-devel libffi-devel openssl-devel
+                 libuv-devel gcc
    Arch:         pacman -S libffi openssl libuv
    OSX:          brew install libffi openssl libuv
 
@@ -98,7 +104,6 @@ setup.py
             "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
             "Topic :: System :: Networking",
         ],
-        python_requires='>=3.4',
         packages=find_packages(),
         install_requires=["cffi>=1.0.0"],
         setup_requires=["cffi>=1.0.0"],
@@ -112,9 +117,11 @@ except (SystemExit, Exception):
 
 Please install dependencies (libuv>1.0, openssl or libressl):
 
-Alpine:       apk add python3-dev libffi-dev libressl-dev libuv-dev
+Alpine:       apk add python3-dev libffi-dev libressl-dev libuv-dev build-base
 Debian-based: apt install python3-dev libffi-dev libssl-dev libuv1-dev
-Redhat-based: yum install python3-devel libffi-devel openssl-devel libuv-devel
+              build-essential
+RPM-based:    yum install python3-devel libffi-devel openssl-devel libuv-devel
+              gcc
 Arch:         pacman -S libffi openssl libuv
 OSX:          brew install libffi openssl libuv
 """)

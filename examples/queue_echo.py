@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from libchirp.queue import Chirp, Config, Loop, Message
 
 loop = Loop(); config = Config()

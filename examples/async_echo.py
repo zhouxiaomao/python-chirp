@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import asyncio
 from libchirp.asyncio import Chirp, Config, Loop
 

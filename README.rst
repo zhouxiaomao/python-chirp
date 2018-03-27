@@ -58,14 +58,16 @@ Features
 Install
 =======
 
+We only support python 3.5+
+
 Dependencies
 ------------
 
 .. code-block:: bash
 
-   Alpine:       apk add python3-dev libffi-dev libressl-dev libuv-dev
-   Debian-based: apt install python3-dev libffi-dev libssl-dev libuv1-dev
-   Redhat-based: yum install python3-devel libffi-devel openssl-devel libuv-devel
+   Alpine:       apk add python3-dev libffi-dev libressl-dev libuv-dev build-base
+   Debian-based: apt install python3-dev libffi-dev libssl-dev libuv1-dev build-essential
+   RPM-based:    yum install python3-devel libffi-devel openssl-devel libuv-devel gcc
    Arch:         pacman -S libffi openssl libuv
    OSX:          brew install libffi openssl libuv
 

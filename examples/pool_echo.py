@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from concurrent.futures import Future
 from libchirp.pool import Chirp, Config, Loop
 

@@ -41,6 +41,7 @@ if sys.platform == "win32":
         "crypt32",
     ])
 else:
+    comp.extend(["-std=gnu99"])
     libs.extend([
         "m",
         "pthread",
