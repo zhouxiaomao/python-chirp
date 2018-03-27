@@ -320,7 +320,7 @@ typedef enum {
 
 #endif // ch_common_h
 // =================
-// Queue / Stack 0.7
+// Queue / Stack 0.8
 // =================
 //
 // Queue and stack with a rbtree-style interface. Both queue and stack use one
@@ -1076,7 +1076,7 @@ typedef enum {
 //    :target: https://travis-ci.org/concretecloud/rbtree/
 //
 // ==================
-// Red-Black Tree 0.7
+// Red-Black Tree 0.8
 // ==================
 //
 // * Bonus: `qs.h`_ (Queue / Stack), mpipe_ (message-pack over pipe)
@@ -1134,6 +1134,11 @@ typedef enum {
 // * Remove next from _qs_queue_bind_decl_tr_m and renaming it to
 //   qs_queue_bind_decl_m
 // * Document bind shortcuts for rb and qs
+//
+// 0.7 -> 0.8
+// ----------
+//
+// * Remove non-ascii chars from source
 //
 // Development
 // ===========
@@ -2866,11 +2871,11 @@ do { \
 //               .---.   rotate_right   .---.
 //               | y |     ------->     | x |
 //               .---.                  .---.
-//              /     ∖                /     ∖
+//              /     |                /     |
 //         .---'     .-'-.        .---'      .'--.
 //         | x |     | C |        | A |      | y |
 //         .---.     '---'        '---'      .---.
-//        /     ∖                           /     ∖
+//        /     |                           /     |
 //     .-'-.    .'--.                    .-'-.    .'--.
 //     | A |    | B |      <------       | B |    | C |
 //     '---'    '---'    rotate_left     '---'    '---'
@@ -3106,7 +3111,7 @@ do { \
 ) \
 { \
     y = right(parent(parent(x))); \
-    /* Case 1: z’s uncle y is red. */ \
+    /* Case 1: z's uncle y is red. */ \
     if(rb_is_red_m(color(y))) { \
         rb_make_black_m(color(parent(x))); \
         rb_make_black_m(color(y)); \
@@ -3116,7 +3121,7 @@ do { \
          * grandparent. */ \
         x = parent(parent(x)); \
     } else { \
-        /* Case 2: z’s uncle y is black and z is a right child. */ \
+        /* Case 2: z's uncle y is black and z is a right child. */ \
         if(x == right(parent(x))) { \
             x = parent(x); \
             rot_left( \
@@ -3130,7 +3135,7 @@ do { \
                 x \
             ); \
         } \
-        /* Case 3: z’s uncle y is black and z is a left child. */ \
+        /* Case 3: z's uncle y is black and z is a left child. */ \
         rb_make_black_m(color(parent(x))); \
         rb_make_red_m(color(parent(parent(x)))); \
         rot_right( \
@@ -3261,7 +3266,7 @@ do { \
 { \
     /* X is double (extra) black. Goal: introduce a real black node. */ \
     w = right(parent(x)); \
-    /* Case 1: x’s sibling w is red. */ \
+    /* Case 1: x's sibling w is red. */ \
     if(rb_is_red_m(color(w))) { \
         rb_make_black_m(color(w)); \
         rb_make_red_m(color(parent(x))); \
@@ -3282,12 +3287,12 @@ do { \
             rb_is_black_m(color(left(w))) && \
             rb_is_black_m(color(right(w))) \
     ) { \
-        /* Case 2: x’s sibling w is black, and both of w’s children are black. */ \
+        /* Case 2: x's sibling w is black, and both of w's children are black. */ \
         rb_make_red_m(color(w)); \
         /* Double blackness move up. Reenter loop. */ \
         x = parent(x); \
     } else { \
-        /* Case 3: x’s sibling w is black, w’s left child is red, and w’s right \
+        /* Case 3: x's sibling w is black, w's left child is red, and w's right \
          * child is black. */ \
         if(rb_is_black_m(color(right(w)))) { \
             rb_make_black_m(color(left(w))); \
@@ -3304,7 +3309,7 @@ do { \
             ); \
             w = right(parent(x)); \
         } \
-        /* Case 3: x’s sibling w is black, w’s left child is red, and w’s right \
+        /* Case 3: x's sibling w is black, w's left child is red, and w's right \
          * child is black. */ \
         color(w) = color(parent(x)); \
         rb_make_black_m(color(parent(x))); \
@@ -5421,7 +5426,7 @@ typedef enum {
 //    .. c:member:: uv_loop_t* loop
 //
 //       Pointer to the libuv (main) event loop. The event loop is the central
-//       part of libuv’s functionality. It takes care of polling for i/o and
+//       part of libuv's functionality. It takes care of polling for i/o and
 //       scheduling callbacks to be run based on different sources of events.
 //
 //    .. c:member:: uint8_t identity[16]
@@ -11000,7 +11005,7 @@ _ch_wr_check_write_error(
 // .. code-block:: cpp
 //
 {
-    A(writer->msg != NULL, "ⱳriter->msg should be set on callback");
+    A(writer->msg != NULL, "writer->msg should be set on callback");
     (void) (writer);
     if (status != CH_SUCCESS) {
         LC(chirp,
