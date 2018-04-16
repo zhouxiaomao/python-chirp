@@ -2,6 +2,7 @@
 
 from queue import Queue
 import time
+import pytest
 
 from libchirp.pool import Chirp, Config
 
@@ -33,6 +34,21 @@ def test_recv_msg(config, sender, message):
     msg = a.queue.get()
     time.sleep(0.1)
     assert msg._msg_t is None
+    a.stop()
+
+
+def test_pool_reqest_timeout(config, sender, message):
+    """test_pool_reqest_timeout."""
+    config = Config()
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+
+    a = Chirp(sender.loop, config)
+    message.data = b'hello'
+    message.address = "127.0.0.1"
+    message.port = config.PORT
+    with pytest.raises(TimeoutError):
+        sender.request(message).result()
     a.stop()
 
 

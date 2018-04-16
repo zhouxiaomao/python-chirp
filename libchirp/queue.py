@@ -29,10 +29,11 @@ def _queue_recv_cb(chirp_t, msg_t):
     msg = Message(msg_t)
     chirp._register_msg(msg)
     msg._chirp = chirp
-    if chirp._disable_queue:
-        msg.release()
-    else:
-        chirp.put(msg)
+    if not chirp._check_request(msg):
+        if chirp._disable_queue:
+            msg.release()
+        else:
+            chirp.put(msg)
 
 
 class Chirp(ChirpBase, Queue):

@@ -2,6 +2,7 @@
 
 import queue
 import time
+import gc
 
 from libchirp.queue import Chirp, Config, Message
 
@@ -12,6 +13,40 @@ def test_initialize(loop, config):
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     a = Chirp(loop, config)
     a.stop()
+
+
+def test_request(config, sender, message, ref_count_offset):
+    """test_request."""
+    try:
+        config = Config()
+        config.DH_PARAMS_PEM = "./tests/dh.pem"
+        config.CERT_CHAIN_PEM = "./tests/cert.pem"
+        config.SYNCHRONOUS = False
+        config.AUTO_RELEASE = False
+        a = Chirp(sender.loop, config)
+        message.data = b'hello'
+        message.address = "127.0.0.1"
+        message.port = config.PORT
+        fut = sender.request(message)
+        msg = a.get()
+        assert msg.data == b'hello'
+        a.send(msg).result()
+        b = msg.release_slot()
+        b.result()
+        assert msg._msg_t is None
+        msg.release()
+        assert msg._msg_t is not None
+        msg2 = fut.result()
+        assert msg2._msg_t is None
+        msg2.release()
+        assert msg2._msg_t is not None
+        p = fut.send_result()
+        assert p is message
+    finally:
+        a.stop()
+        msg = None
+        msg2 = None
+        assert len(gc.get_referrers(a)) == 1 + ref_count_offset
 
 
 def test_recv_msg(config, sender, message):
@@ -32,6 +67,8 @@ def test_recv_msg(config, sender, message):
     msg.release()
     assert msg._msg_t is not None
     a.stop()
+    msg = None
+    assert len(gc.get_referrers(a)) == 1
 
 
 def test_disable_queue(config, sender, message):

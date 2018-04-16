@@ -37,7 +37,8 @@ def _pool_recv_cb(chirp_t, msg_t):
     msg = Message(msg_t)
     chirp._register_msg(msg)
     msg._chirp = chirp
-    chirp.submit(_loop_hander, chirp, msg)
+    if not chirp._check_request(msg):
+        chirp.submit(_loop_hander, chirp, msg)
 
 
 class Chirp(ChirpBase, ThreadPoolExecutor):

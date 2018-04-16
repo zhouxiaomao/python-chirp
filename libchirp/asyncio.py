@@ -1,12 +1,32 @@
 """Implements the :py:mod:`asyncio`-based interface."""
 
 import asyncio
+import weakref
 
 from libchirp import ChirpBase, Config, Loop, MessageThread
 
 from _libchirp_cffi import ffi, lib  # noqa
 
 __all__ = ('Chirp', 'Config', 'Message', 'Loop')
+
+
+def _weak_send_result(self):
+    """Bind method using a weakref.
+
+    Dynamically binding a method usually creates a cyclic-reference, which
+    defeats reference-counting and needs the garbage-collector to cleanup. In
+    chirp we want reference-counting to work and free memory early.
+    """
+    self = weakref.ref(self)
+
+    def send_result():
+        """Wait for the request being sent. This method is awaitable."""
+        self_r = self()
+        if self_r:
+            return asyncio.wrap_future(self_r._send_fut)
+        else:
+            return asyncio.Future()
+    return send_result
 
 
 class Message(MessageThread):
@@ -52,9 +72,10 @@ def _async_recv_cb(chirp_t, msg_t):
     msg = Message(msg_t)
     chirp._register_msg(msg)
     msg._chirp = chirp
-    asyncio.run_coroutine_threadsafe(
-        _async_handler(chirp, msg), chirp._asyncio_loop
-    )
+    if not chirp._check_request(msg):
+        asyncio.run_coroutine_threadsafe(
+            _async_handler(chirp, msg), chirp._asyncio_loop
+        )
 
 
 class Chirp(ChirpBase):
@@ -105,6 +126,37 @@ class Chirp(ChirpBase):
         :rtype: asyncio.Future
         """
         return asyncio.wrap_future(ChirpBase.send(self, msg))
+
+    def request(self, msg, auto_release=True):
+        """Send a message and wait for an answer.
+
+        This method returns a :py:class:`libchirp.ChirpFutureAsync`.
+
+        Returns a Future which you can await. The result will contain the
+        answer to the message. If you don't intend to consume the result use
+        :py:meth:`send` instead.
+
+        By default the message slot used by the response will released.
+        If auto_release is False, you have to release the response-message.
+
+        Exceptions, threading and concurrency aspects are the same as
+        :py:meth:`send`. Issue: If a answer to request arrives after the
+        timeout it will be delivered at normal message.
+
+        .. code-block:: python
+
+            req = chirp.request(msg)
+            await req.send_result()
+            answer = await req
+
+        :param MessageThread msg: The message to send.
+        :rtype: concurrent.futures.Future
+        """
+        base_fut = ChirpBase.request(self, msg, auto_release)
+        fut = asyncio.wrap_future(base_fut)
+        fut.send_result = _weak_send_result(fut)
+        fut._send_fut = base_fut._send_fut
+        return fut
 
     async def handler(self, msg):  # noqa
         """Called when a message arrives.

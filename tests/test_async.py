@@ -1,10 +1,45 @@
 """Queue tests."""
 
 import asyncio
+import gc
 import pytest
 import time
 
 from libchirp.asyncio import Chirp, Config
+
+
+def test_request_async(config, queue, message, ref_count_offset):
+    """test_request_async."""
+    try:
+        aio_loop = asyncio.get_event_loop()
+        config = Config()
+        config.DH_PARAMS_PEM = "./tests/dh.pem"
+        config.CERT_CHAIN_PEM = "./tests/cert.pem"
+        config.SYNCHRONOUS = False
+        config.AUTO_RELEASE = False
+        a = Chirp(queue.loop, config, aio_loop)
+        message.data = b'hello'
+        message.address = "127.0.0.1"
+        message.port = 2992
+        fut = a.request(message)
+        p = aio_loop.run_until_complete(fut.send_result())
+        assert p is message
+        aio_loop.run_until_complete(fut.send_result())
+        msg = queue.get()
+        send_fut = queue.send(msg)
+        assert msg.data == b'hello'
+        msg2 = aio_loop.run_until_complete(fut)
+        send_fut.result()
+        msg.release().result()
+        assert msg2.data == b'hello'
+        aio_loop.run_until_complete(msg2.release())
+    finally:
+        a.stop()
+        queue.stop()
+        fut = None
+        msg = None
+        msg2 = None
+        assert len(gc.get_referrers(a)) == 1 + ref_count_offset
 
 
 def test_initialize(loop, config):

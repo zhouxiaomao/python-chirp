@@ -1,5 +1,5 @@
 """Configure pytest."""
-from libchirp import ChirpBase, Config, Loop, MessageThread
+from libchirp import Config, Loop, MessageThread
 from libchirp.queue import Chirp
 import os
 import pytest
@@ -48,7 +48,8 @@ def sender(loop, config):
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     config.PORT = 2992
-    a = ChirpBase(loop, config)
+    config.TIMEOUT = 1
+    a = Chirp(loop, config)
     yield a
     a.stop()
 
@@ -71,7 +72,7 @@ def fast_sender(loop, config):
     config.DISABLE_ENCRYPTION = True
     config.SYNCHRONOUS = False
     config.PORT = 2992
-    a = ChirpBase(loop, config)
+    a = Chirp(loop, config)
     yield a
     a.stop()
 

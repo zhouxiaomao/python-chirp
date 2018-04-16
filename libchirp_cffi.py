@@ -111,6 +111,8 @@ ch_libchirp_init(void);
 
 // Forward decls
 
+struct uv_timer_s;
+typedef struct uv_timer_s uv_timer_t;
 struct uv_loop_s;
 typedef struct uv_loop_s uv_loop_t;
 struct uv_handle_s;
@@ -126,6 +128,7 @@ typedef struct ch_message_s ch_message_t;
 
 // Callbacks
 
+typedef void (*uv_timer_cb)(uv_timer_t* handle);
 typedef void (*ch_done_cb_t)(ch_chirp_t* chirp);
 typedef void (*ch_log_cb_t)(char msg[], char error);
 typedef void (*ch_send_cb_t)(
@@ -138,6 +141,8 @@ typedef void (*ch_release_cb_t)(
 typedef void (*uv_close_cb)(uv_handle_t* handle);
 typedef void (*uv_async_cb)(uv_async_t* handle);
 
+extern "Python" void _timer_close_cb(uv_handle_t* handle);
+extern "Python" void _request_timeout_cb(uv_timer_t*);
 extern "Python" void _loop_async_cb(uv_async_t*);
 extern "Python" void _chirp_log_cb(char msg[], char error);
 extern "Python" void _chirp_done_cb(ch_chirp_t* chirp);
@@ -155,6 +160,11 @@ typedef enum {
   UV_RUN_ONCE,
   UV_RUN_NOWAIT
 } uv_run_mode;
+
+struct uv_timer_s {
+  void* data;
+  ...;
+};
 
 struct uv_loop_s {
   void* data;
@@ -193,6 +203,20 @@ uv_async_init(uv_loop_t*, uv_async_t* async, uv_async_cb async_cb);
 
 int
 uv_async_send(uv_async_t* async);
+
+int
+uv_timer_init(uv_loop_t* loop, uv_timer_t* handle);
+
+int
+uv_timer_start(
+    uv_timer_t* handle,
+    uv_timer_cb cb,
+    uint64_t timeout,
+    uint64_t repeat
+);
+
+int
+uv_timer_stop(uv_timer_t* handle);
 
 // Config
 

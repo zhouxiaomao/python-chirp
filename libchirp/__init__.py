@@ -21,6 +21,44 @@ _l = logging.getLogger("libchirp")
 __all__ = ('Config', 'Loop')
 
 
+class ChirpFuture(Future):
+    """Implements a future that can wait for a chirp request."""
+
+    def __init__(self, auto_release=True):
+        self._auto_release = auto_release
+        Future.__init__(self)
+
+    def result(self, timeout=None):
+        """Return the answer to the request.
+
+        See :py:meth:`concurrent.futures.Future.result`. In contrast to the
+        standard Future this method will release the message-slot if
+        :py:attr:`libchirp.Config.AUTO_RELEASE` is True.
+
+        .. code-block:: python
+
+            res = fut.result()
+            # Do something
+            res.release()
+
+        :rtype: libchirp.MessageBase
+        """
+        try:
+            res = Future.result(self, timeout)
+            if self._auto_release:
+                res.release()
+            return res
+        finally:
+            self._chirp = None
+
+    def send_result(self, timeout=None):
+        """Wait for the request being sent.
+
+        :param float timeout: Timeout in seconds
+        """
+        return self._send_fut.result(timeout)
+
+
 class Config(object):
     """Chirp configuration.
 
@@ -633,6 +671,7 @@ class MessageThread(MessageBase):
                 raise RuntimeError(
                     "Message still sending, please wait for the send() result"
                 )
+                self._fut.result()
             lib.ch_chirp_release_msg_slot_ts(
                 chirp._chirp_t, msg_t, lib._release_cb
             )
@@ -781,6 +820,60 @@ class Loop(object):
 _last_error = threading.local()
 
 
+def make_timer(fut):
+    """Create a uv_timer to cleanup requests on timeout.
+
+    :param ChirpFuture fut: Future to cancel after timeout
+    """
+    chirp = fut._chirp
+    timer_t = _new_nozero("uv_timer_t*")
+    fut._timer_t = timer_t
+    lib.uv_timer_init(chirp._loop._loop_t, timer_t)
+    # Wrap the future in a cffi handler to pass to timer_t.data
+    handle = ffi.new_handle(fut)
+    timer_t.data = handle
+    # Keep the handler data
+    fut._handle = handle
+    lib.uv_timer_start(
+        timer_t,
+        lib._request_timeout_cb,
+        int(chirp._config.TIMEOUT * 1000),
+        0
+    )
+
+
+@ffi.def_extern()
+def _timer_close_cb(timer_t):
+    """Free data assosited with the request timeout-timer.
+
+    Free the handle pointing from timer_t.data to the future and free
+    timer_t itself.
+    """
+    fut = ffi.from_handle(timer_t.data)
+    chirp = fut._chirp
+    with chirp._lock:
+        if fut._id in chirp._requests:
+            # Resolve the circular-reference, so the future will be cleared by
+            # reference-counting.
+            del chirp._requests[fut._id]
+    fut._handle = None
+    fut._timer_t = None
+
+
+@ffi.def_extern()
+def _request_timeout_cb(timer_t):
+    """When the request was not answered in time set an exception and cleanup.
+
+    The close-handler will release the C-memory.
+    """
+    fut = ffi.from_handle(timer_t.data)
+    fut.set_exception(TimeoutError("Chirp request timed out"))
+    lib.uv_close(
+        ffi.cast("uv_handle_t*", fut._timer_t),
+        lib._timer_close_cb
+    )
+
+
 @ffi.def_extern()
 def _chirp_log_cb(msg, error):
     """libchirp.c calls this to log messages."""
@@ -877,11 +970,14 @@ class ChirpBase(object):
         config.__dict__['_sealed'] = True
         self._await_msgs   = dict()
         self._release_msgs = dict()
+        self._requests     = dict()
+        self._timeouts     = dict()
         self._done         = Future()
         self._lock         = threading.Lock()
         self._loop         = loop
         self._config       = config
         self._auto_release = config.AUTO_RELEASE
+        self._stopped      = False
         if not recv:
             self._recv     = ffi.NULL
         else:
@@ -947,11 +1043,22 @@ class ChirpBase(object):
     def stop(self):
         """Stop the chirp-instance."""
         with self._lock:
+            if self._stopped:
+                return
             rel_msgs = dict(self._release_msgs)
         try:
             for fut, _ in rel_msgs.values():
                 fut.result(timeout=self._config.TIMEOUT)
         except CFTimeoutError:
+            for _, msg in rel_msgs.values():
+                msg.release_slot()
+            try:
+                for fut, _ in rel_msgs.values():
+                    fut.result(timeout=self._config.TIMEOUT)
+            except CFTimeoutError:
+                pass
+            # Although we have cleaned-up for the user, we raise an exception,
+            # because this is an usage-error.
             raise RuntimeError(
                 "Timeout waiting for released messages, "
                 "maybe a message was not released."
@@ -962,6 +1069,7 @@ class ChirpBase(object):
             self._loop._refdec()
             with self._lock:
                 # Break loops
+                self._stopped = True
                 self._release_msgs = None
                 self._data = None
                 self._loop = None
@@ -1009,6 +1117,61 @@ class ChirpBase(object):
         msg._copy_to_c()
         lib.ch_chirp_send_ts(self._chirp_t, msg_t, lib._send_cb)
         return fut
+
+    def request(self, msg, auto_release=True):
+        """Send a message and wait for an answer.
+
+        This method returns a :py:class:`libchirp.ChirpFuture`.
+
+        The result() of the will contain the answer to the message. If you
+        don't intend to consume the result use :py:meth:`send` instead.
+
+        By default the message slot used by the response will released.
+        If auto_release is False, you have to release the response-message.
+
+        Exceptions, threading and concurrency aspects are the same as
+        :py:meth:`send`. Issue: If a answer to request arrives after the
+        timeout it will be delivered at normal message.
+
+        To wait for the request being sent use
+        :py:meth:`libchirp.ChirpFuture.send_result`.
+
+        .. code-block:: python
+
+            req = chirp.request(msg)
+            req.send_result()
+            answer = req.result()
+
+        :param MessageThread msg: The message to send.
+        :param bool auto_release: Release the response (default True)
+        :rtype: concurrent.futures.Future
+        """
+        send_fut = self.send(msg)
+        fut = ChirpFuture(auto_release)
+        fut._send_fut = send_fut
+        fut._chirp = self
+        id_ = msg.identity
+        fut._id = id_
+        with self._lock:
+            self._requests[id_] = fut
+
+        self.loop.call_soon(make_timer, fut)
+        return fut
+
+    def _check_request(self, msg):
+        """Check if message is an response to a request."""
+        with self._lock:
+            fut = self._requests.get(msg.identity)
+        if fut:
+            # If the request if found, we stop the timeout-timer and cleanup
+            lib.uv_timer_stop(fut._timer_t)
+            lib.uv_close(
+                ffi.cast("uv_handle_t*", fut._timer_t),
+                lib._timer_close_cb
+            )
+            fut.set_result(msg)
+            return True
+        return False
 
     def identity(self):
         return ffi.buffer(

@@ -149,7 +149,7 @@ For the
 
 * :py:class:`libchirp.pool.Chirp`
 
-implementations the libuv evnet-loop runs in a separate thread.
+implementations the libuv event-loop runs in a separate thread.
 send()/release_slot() return Futures, which will finish once libchirp.c has
 finished the operation.  Concurrency can be achieved by issuing multiple send()
 commands and waiting for all the resulting futures later. In a low-latency
