@@ -629,6 +629,10 @@ class MessageThread(MessageBase):
                     fut = chirp._release_msgs[(self.identity, self.serial)][0]
                     doit = True
         if doit:
+            if self._fut:
+                raise RuntimeError(
+                    "Message still sending, please wait for the send() result"
+                )
             lib.ch_chirp_release_msg_slot_ts(
                 chirp._chirp_t, msg_t, lib._release_cb
             )
@@ -816,7 +820,7 @@ def _send_cb(chirp_t, msg_t, status):
         )
     with chirp._lock:
         del chirp._await_msgs[msg]
-    msg._fut = None
+        msg._fut = None
 
 
 def chirp_error_to_exception(error, msg):
@@ -1000,7 +1004,9 @@ class ChirpBase(object):
         fut = Future()
         with self._lock:
             if msg._fut:
-                raise RuntimeError("Message already sending")
+                raise RuntimeError(
+                    "Message still sending, please wait for the send() result"
+                )
             msg._ensure_message()
             msg._fut = fut
             msg_t = msg._msg_t
