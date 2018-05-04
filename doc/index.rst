@@ -108,6 +108,34 @@ For more complex application where you have to schedule your operations anyway,
 use :py:attr:`libchirp.Config.SYNCHRONOUS` = `False`, do periodic bookkeeping
 and resend failed operations.
 
+Message-slots
+=============
+
+libchirp supports up to 32 message-slots configured by
+:py:attr:`libchirp.Config.MAX_SLOTS`. By default 16 (connection-asynchronous) or
+1 (synchronous) message-slots are used. Message-slots ensure that a chirp-node
+is not overloaded. If there where no bounds the system could go out-of-memory or
+not be able to do the computations requested by the messages. Because of this
+message-slots have to be released after the work is done. In order to be more
+pythonic, libchirp has the :py:attr:`libchirp.Config.AUTO_RELEASE` feature,
+which will automatically release the message-slot after the handler (your code)
+returns. If the work is not done after the message-slot returns we recommend to
+release the message-slot manually.
+
+In connection-synchronous mode the throttling will also propagate through
+message-routers if routed message is released after
+
+.. code-block:: python
+
+   send().result()
+
+returns.
+
+In :py:class:`libchirp.queue.Chirp` the message will be release when you call
+:py:meth:`libchirp.queue.Chirp.get`, which is NOT after the work is done. Which
+is fine if you process one message at time. If you process messages concurrent,
+we recommend to disable auto-release.
+
 .. _concurrency:
 
 Concurrency
@@ -115,11 +143,11 @@ Concurrency
 
 For the
 
-* :py:mod:`libchirp.asyncio.Chirp`
+* :py:class:`libchirp.asyncio.Chirp`
 
-* :py:mod:`libchirp.queue.Chirp`
+* :py:class:`libchirp.queue.Chirp`
 
-* :py:mod:`libchirp.pool.Chirp`
+* :py:class:`libchirp.pool.Chirp`
 
 implementations the libuv evnet-loop runs in a separate thread.
 send()/release_slot() return Futures, which will finish once libchirp.c has
