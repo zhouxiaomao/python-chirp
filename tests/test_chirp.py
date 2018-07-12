@@ -11,13 +11,13 @@ _echo_test = os.path.exists("./echo_test")
 
 
 def test_value_error(loop, config):
-    """test_lifecycle."""
+    """test_value_error."""
     with pytest.raises(ValueError):
         ChirpBase(loop, config)
 
 
 def test_too_high_timeout(loop, config):
-    """test_lifecycle."""
+    """test_too_high_timeout."""
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     config.TIMEOUT = 1201
@@ -27,21 +27,26 @@ def test_too_high_timeout(loop, config):
         assert "Config: timeout must be <= 1200." in e.args[0]
 
 
-def test_lifecycle(config):
+def test_lifecycle(config, ref_count_offset):
     """test_lifecycle."""
     loop = Loop()
     loop.run()
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     a = ChirpBase(loop, config)
-    assert a.identity != b'\0' * lib.CH_ID_SIZE
-    assert len(gc.get_referrers(a)) > 1
-    a.stop()
-    assert len(gc.get_referrers(a)) == 1
-    assert loop.running
-    loop.stop()
-    assert len(gc.get_referrers(loop)) == 1
-    assert not loop.running
+    try:
+        assert a.identity != b'\0' * lib.CH_ID_SIZE
+        assert len(gc.get_referrers(a)) > 1 + ref_count_offset
+        a.stop()
+        assert len(gc.get_referrers(a)) == 1 + ref_count_offset
+        assert loop.running
+        loop.stop()
+        assert len(gc.get_referrers(loop)) == 1 + ref_count_offset
+        assert not loop.running
+    except BaseException:
+        a.stop()
+        loop.stop()
+        raise
 
 
 def test_listen_error(loop, config):

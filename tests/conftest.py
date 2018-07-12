@@ -6,6 +6,20 @@ import pytest
 import signal
 from subprocess import Popen, PIPE, TimeoutExpired
 import time
+import sys
+
+
+@pytest.fixture
+def ref_count_offset():
+    """Get refcount offset of python.
+
+    Python 3.7+ doesn't count the local reference, we are asking about, as
+    reference. One can argue the correctness of this, we just fix it.
+    """
+    if sys.version_info >= (3, 7):
+        return -1
+    else:
+        return 0
 
 
 @pytest.fixture

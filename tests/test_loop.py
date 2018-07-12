@@ -8,20 +8,24 @@ import threading
 from libchirp import Loop
 
 
-def test_loop_lifecycle(caplog):
+def test_loop_lifecycle(caplog, ref_count_offset):
     """test_loop_lifecycle."""
     caplog.set_level(logging.DEBUG)
     a = Loop()
-    a.run()
-    assert len(gc.get_referrers(a)) > 1
-    assert a.running
-    a.stop()
-    assert not a.running
-    assert len(gc.get_referrers(a)) == 1
-    assert caplog.record_tuples == [
-        ('libchirp', 10, 'libuv event-loop started'),
-        ('libchirp', 10, 'libuv event-loop stopped'),
-    ]
+    try:
+        a.run()
+        assert len(gc.get_referrers(a)) > 1 + ref_count_offset
+        assert a.running
+        a.stop()
+        assert not a.running
+        assert len(gc.get_referrers(a)) == 1 + ref_count_offset
+        assert caplog.record_tuples == [
+            ('libchirp', 10, 'libuv event-loop started'),
+            ('libchirp', 10, 'libuv event-loop stopped'),
+        ]
+    except BaseException:
+        a.stop()
+        raise
 
 
 def get_thread(fut: Future):
