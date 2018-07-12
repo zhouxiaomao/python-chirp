@@ -1338,6 +1338,10 @@ ch_en_tls_cleanup(void);
 //
 //    Cleanup LibreSSL or OpenSSL. Is a no-op if CH_WITHOUT_TLS is defined.
 //
+//    In release-mode we do not cleanup the TLS library. If you want to check
+//    for memory leaks in your application define :c:macro:`CH_TLS_CLEANUP` or
+//    call this manually.
+//
 //   :return: A chirp error. see: :c:type:`ch_error_t`
 //   :rtype:  ch_error_t
 
@@ -1420,6 +1424,9 @@ ch_libchirp_cleanup(void);
 //
 //    Cleanup the global libchirp structures, including encryption/libssl
 //
+//    In release-mode we do not cleanup the TLS library. If you want to check
+//    for memory leaks in your application define :c:macro:`CH_TLS_CLEANUP` or
+//    call :c:func:`ch_en_tls_cleanup` manually.
 
 // .. c:function::
 CH_EXPORT

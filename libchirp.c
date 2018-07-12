@@ -6926,6 +6926,7 @@ ch_libchirp_cleanup(void)
 // .. code-block:: cpp
 //
 {
+    ch_error_t ret = CH_SUCCESS;
     A(_ch_libchirp_initialized, "Libchirp is not initialized");
     if (!_ch_libchirp_initialized) {
         fprintf(stderr,
@@ -6937,9 +6938,9 @@ ch_libchirp_cleanup(void)
     _ch_libchirp_initialized = 0;
     uv_mutex_destroy(&_ch_chirp_init_lock);
 #ifndef CH_WITHOUT_TLS
-    ch_error_t ret = ch_en_tls_cleanup();
-#else
-    ch_error_t ret = CH_SUCCESS;
+#if defined(CH_TLS_CLEANUP) || !defined(NDEBUG)
+    ret = ch_en_tls_cleanup();
+#endif
 #endif
 #ifdef CH_ENABLE_ASSERTS
     ch_at_cleanup();
@@ -8009,20 +8010,18 @@ ch_en_tls_init(void)
     if (_ch_en_manual_tls) {
         return CH_SUCCESS;
     }
-    /* Detect if ssl is already initialized by host program */
-    if (EVP_get_cipherbyname("AES-256-CBC")) {
-        _ch_en_manual_tls = 1;
-        return CH_SUCCESS;
-    }
 #ifdef CH_OPENSSL_10_API
-    if (CRYPTO_get_locking_callback() != NULL) {
-        _ch_en_manual_tls = 1;
-        return CH_SUCCESS;
-    }
     OPENSSL_add_all_algorithms_noconf();
     SSL_load_error_strings();
     SSL_library_init();
 
+    /* Check if the host program already initialized threading. The
+     * initialization above only adds things and doesn't change anything, but
+     * threading setup would change the lock-callback and bad things would
+     * happen. */
+    if (CRYPTO_get_locking_callback() != NULL) {
+        return CH_SUCCESS;
+    }
     return ch_en_tls_threading_setup();
 #else
     if (OPENSSL_init_ssl(0, NULL) == 0) {
