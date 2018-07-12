@@ -66,3 +66,25 @@ class Chirp(ChirpBase, Queue):
     def disable_queue(self, value):
         """Set if the queue is disabled."""
         self._disable_queue = value
+
+    def get(self, *args, **kwargs):
+        """Remove, release and return an message from the queue.
+
+        If optional args block is true and timeout is None (the default), block
+        if necessary until an item is available. If timeout is a positive
+        number, it blocks at most timeout seconds and raises the Empty
+        exception if no item was available within that time. Otherwise (block
+        is false), return an item if one is immediately available, else raise
+        the Empty exception (timeout is ignored in that case).
+        """
+        msg = Queue.get(self, *args, **kwargs)
+        if msg and self._auto_release:
+            msg.release()
+        return msg
+
+    def get_nowait(self):
+        """Equivalent to get(False)."""
+        msg = Queue.get(self, False)
+        if msg and self._auto_release:
+            msg.release()
+        return msg

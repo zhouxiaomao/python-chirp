@@ -45,6 +45,7 @@ def queue(loop, config):
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
     config.PORT = 2992
+    config.AUTO_RELEASE = False
     a = Chirp(loop, config)
     yield a
     a.stop()

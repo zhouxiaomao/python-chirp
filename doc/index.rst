@@ -131,7 +131,7 @@ message-routers if routed message is released after
 
 returns.
 
-In :py:class:`libchirp.queue.Chirp` the message will be release when you call
+In :py:class:`libchirp.queue.Chirp` the message will be released when you call
 :py:meth:`libchirp.queue.Chirp.get`, which is NOT after the work is done. Which
 is fine if you process one message at time. If you process messages concurrent,
 we recommend to disable auto-release.

@@ -1,5 +1,6 @@
 """Queue tests."""
 
+import queue
 import time
 
 from libchirp.queue import Chirp, Config, Message
@@ -18,6 +19,7 @@ def test_recv_msg(config, sender, message):
     config = Config()
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    config.AUTO_RELEASE = False
     a = Chirp(sender.loop, config)
     message.data = b'hello'
     message.address = "127.0.0.1"
@@ -57,8 +59,25 @@ def test_recv_msg_wait(config, sender, message):
     message.address = "127.0.0.1"
     message.port = config.PORT
     fut = sender.send(message)
-    msg = a.get()
-    msg.release()
+    a.get()
+    fut.result()
+    a.stop()
+
+
+def test_recv_msg_no_wait(config, sender, message):
+    """test_recv_msg_no_wait."""
+    config = Config()
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+    a = Chirp(sender.loop, config)
+    message.data = b'hello'
+    message.address = "127.0.0.1"
+    message.port = config.PORT
+    fut = sender.send(message)
+    try:
+        a.get_nowait()
+    except queue.Empty:
+        a.get()
     fut.result()
     a.stop()
 
@@ -69,6 +88,7 @@ def test_recv_msg_perf(capsys, config, sender):
         config = Config()
         config.DH_PARAMS_PEM = "./tests/dh.pem"
         config.CERT_CHAIN_PEM = "./tests/cert.pem"
+        config.AUTO_RELEASE = False
         a = Chirp(sender.loop, config)
         messages = []
         for _ in range(100):
@@ -113,7 +133,7 @@ def test_recv_msg_perf_fast(capsys, config, fast_sender):
             for msg in messages:
                 futs.append(fast_sender.send(msg))
             for _ in range(100):
-                a.get().release()
+                a.get()
             for fut in futs:
                 fut.result()
         end = time.time()
