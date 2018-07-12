@@ -91,6 +91,14 @@ setup.py
    pip install cffi
    python setup.py install
 
+testing
+-------
+
+.. code-block:: bash
+
+   python libchirp_cffi.py debug
+   pytest
+
 
 Changes
 =======
