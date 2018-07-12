@@ -1,6 +1,7 @@
 """Loop tests."""
 from concurrent.futures import Future
 import gc
+import logging
 import pytest
 import threading
 
@@ -9,6 +10,7 @@ from libchirp import Loop
 
 def test_loop_lifecycle(caplog):
     """test_loop_lifecycle."""
+    caplog.set_level(logging.DEBUG)
     a = Loop()
     a.run()
     assert len(gc.get_referrers(a)) > 1
