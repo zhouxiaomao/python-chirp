@@ -658,15 +658,6 @@ def _loop_async_cb(async_t):
         func(*args, **kwargs)
 
 
-@ffi.def_extern()
-def _loop_close_cb(handle_t):
-    """Libuv calls this when the async_t handle is closed."""
-    self = ffi.from_handle(handle_t.data)
-    with self._lock:
-        loop = self._loop_t
-    lib.uv_stop(loop)
-
-
 class Loop(object):
     """Initialize and run a libuv event-loop.
 
@@ -771,7 +762,7 @@ class Loop(object):
                 async_t = self._async_t
             lib.uv_close(
                 ffi.cast("uv_handle_t*", async_t),
-                lib._loop_close_cb
+                ffi.NULL
             )
         self.call_soon(stop_libuv, self)
         self._thread.join()

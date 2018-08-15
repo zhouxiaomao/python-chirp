@@ -139,7 +139,6 @@ typedef void (*uv_close_cb)(uv_handle_t* handle);
 typedef void (*uv_async_cb)(uv_async_t* handle);
 
 extern "Python" void _loop_async_cb(uv_async_t*);
-extern "Python" void _loop_close_cb(uv_handle_t*);
 extern "Python" void _chirp_log_cb(char msg[], char error);
 extern "Python" void _chirp_done_cb(ch_chirp_t* chirp);
 extern "Python" void _send_cb(
