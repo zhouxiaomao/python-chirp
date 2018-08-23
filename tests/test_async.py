@@ -144,7 +144,6 @@ def test_echo(config, queue, message):
                 fut.set_exception(e)
             finally:
                 await msg.release()
-            pass
 
     a = MyChirp(queue.loop, config, aio_loop)
     message.data = b'hello'

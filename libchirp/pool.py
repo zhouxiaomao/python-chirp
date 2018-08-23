@@ -1,6 +1,7 @@
 """Implements the ThreadPool-based interface."""
 
 from concurrent.futures import ThreadPoolExecutor
+import logging
 
 from libchirp import ChirpBase, Config, Loop, MessageThread
 
@@ -8,6 +9,9 @@ from _libchirp_cffi import ffi, lib  # noqa
 
 
 __all__ = ('Chirp', 'Config', 'Message', 'Loop')
+
+
+_l = logging.getLogger("libchirp")
 
 
 class Message(MessageThread):  # noqa
@@ -23,11 +27,16 @@ class Message(MessageThread):  # noqa
     pass
 
 
-def _loop_hander(chirp, msg):
+def _loop_handler(chirp, msg):
     """Call the user-hander and releases the message if AUTO_RELEASE=1."""
-    chirp.handler(msg)
-    if chirp._auto_release:
-        msg.release()
+    try:
+        chirp.handler(msg)
+        if chirp._auto_release:
+            msg.release()
+    except Exception as e:
+        # TODO Is there a to feed this error into the main thread?
+        _l.exception(e)
+        raise e
 
 
 @ffi.def_extern()
@@ -38,7 +47,7 @@ def _pool_recv_cb(chirp_t, msg_t):
     chirp._register_msg(msg)
     msg._chirp = chirp
     if not chirp._check_request(msg):
-        chirp.submit(_loop_hander, chirp, msg)
+        chirp.submit(_loop_handler, chirp, msg)
 
 
 class Chirp(ChirpBase, ThreadPoolExecutor):
@@ -81,3 +90,8 @@ class Chirp(ChirpBase, ThreadPoolExecutor):
         """
         if not self._auto_release:
             msg.release()
+
+    def stop(self):
+        """Stop the chirp-instance."""
+        self.shutdown()
+        ChirpBase.stop(self)

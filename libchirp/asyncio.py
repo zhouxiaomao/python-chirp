@@ -1,6 +1,7 @@
 """Implements the :py:mod:`asyncio`-based interface."""
 
 import asyncio
+import logging
 import weakref
 
 from libchirp import ChirpBase, Config, Loop, MessageThread
@@ -8,6 +9,8 @@ from libchirp import ChirpBase, Config, Loop, MessageThread
 from _libchirp_cffi import ffi, lib  # noqa
 
 __all__ = ('Chirp', 'Config', 'Message', 'Loop')
+
+_l = logging.getLogger("libchirp")
 
 
 def _weak_send_result(self):
@@ -60,9 +63,15 @@ class Message(MessageThread):
 
 async def _async_handler(chirp, msg):
     """Call the user-hander and releases the message if AUTO_RELEASE=1."""
-    await chirp.handler(msg)
-    if chirp._auto_release:
-        msg.release()
+    try:
+        await chirp.handler(msg)
+        if chirp._auto_release:
+            msg.release()
+    except Exception as e:
+        # TODO This happens if the user forgets an await. Is there a way to let
+        # this exception bubble to the user-code?
+        _l.exception(e)
+        raise e
 
 
 @ffi.def_extern()

@@ -37,8 +37,8 @@ def test_recv_msg(config, sender, message):
     a.stop()
 
 
-def test_pool_reqest_timeout(config, sender, message):
-    """test_pool_reqest_timeout."""
+def test_pool_reqquest_timeout(config, sender, message):
+    """test_pool_request_timeout."""
     config = Config()
     config.DH_PARAMS_PEM = "./tests/dh.pem"
     config.CERT_CHAIN_PEM = "./tests/cert.pem"
@@ -49,6 +49,25 @@ def test_pool_reqest_timeout(config, sender, message):
     message.port = config.PORT
     with pytest.raises(TimeoutError):
         sender.request(message).result()
+    a.stop()
+
+
+def test_pool_request(config, sender, message):
+    """test_pool_request."""
+    config = Config()
+    config.DH_PARAMS_PEM = "./tests/dh.pem"
+    config.CERT_CHAIN_PEM = "./tests/cert.pem"
+
+    class MyChirp(Chirp):
+        def handler(self, msg):
+            self.send(msg).result()
+
+    a = MyChirp(sender.loop, config)
+    message.data = b'hello'
+    message.address = "127.0.0.1"
+    message.port = config.PORT
+    msg = sender.request(message).result()
+    assert msg.data == b'hello'
     a.stop()
 
 

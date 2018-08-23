@@ -671,7 +671,6 @@ class MessageThread(MessageBase):
                 raise RuntimeError(
                     "Message still sending, please wait for the send() result"
                 )
-                self._fut.result()
             lib.ch_chirp_release_msg_slot_ts(
                 chirp._chirp_t, msg_t, lib._release_cb
             )
@@ -851,11 +850,12 @@ def _timer_close_cb(timer_t):
     """
     fut = ffi.from_handle(timer_t.data)
     chirp = fut._chirp
-    with chirp._lock:
-        if fut._id in chirp._requests:
-            # Resolve the circular-reference, so the future will be cleared by
-            # reference-counting.
-            del chirp._requests[fut._id]
+    if chirp:
+        with chirp._lock:
+            if fut._id in chirp._requests:
+                # Resolve the circular-reference, so the future will be cleared
+                # by reference-counting.
+                del chirp._requests[fut._id]
     fut._handle = None
     fut._timer_t = None
 
