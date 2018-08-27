@@ -49,7 +49,7 @@ def test_request(config, sender, message, ref_count_offset):
         assert len(gc.get_referrers(a)) == 1 + ref_count_offset
 
 
-def test_recv_msg(config, sender, message):
+def test_recv_msg(config, sender, message, ref_count_offset):
     """test_recv_msg."""
     config = Config()
     config.DH_PARAMS_PEM = "./tests/dh.pem"
@@ -68,7 +68,7 @@ def test_recv_msg(config, sender, message):
     assert msg._msg_t is not None
     a.stop()
     msg = None
-    assert len(gc.get_referrers(a)) == 1
+    assert len(gc.get_referrers(a)) == 1 + ref_count_offset
 
 
 def test_disable_queue(config, sender, message):
