@@ -64,6 +64,19 @@ class Config(object):
 
     The underlaying C type is annotated in parens. CFFI will raise errors if
     the values overflow (OverflowError) or don't convert (TypeError).
+
+    You can create the certificate using the makepki Makefile_ on github. If
+    you want to create it manually the chain has to contain:
+
+    * The certification authority's public key
+
+    * The client public key (signed by CA)
+
+    * The client private key
+
+    Any client-key signed by the CA will be able to connect.
+
+    .. _Makefile: https://github.com/concretecloud/chirp/tree/master/mk/makepki
     """
 
     _ips     = ('BIND_V4', 'BIND_V6')
