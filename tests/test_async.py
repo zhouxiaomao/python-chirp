@@ -34,8 +34,14 @@ def test_request_async(config, queue, message, ref_count_offset):
         assert msg2.data == b'hello'
         aio_loop.run_until_complete(msg2.release())
     finally:
+        loop = a.loop
         a.stop()
         queue.stop()
+        # The uv_timer_t used in request, might be released after stopping the
+        # chirp instances since it happens in a call_soon. When the loop
+        # stopped we know all handles have been released.
+        loop.stop()
+        loop = None
         fut = None
         msg = None
         msg2 = None
