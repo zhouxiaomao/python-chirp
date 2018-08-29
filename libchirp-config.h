@@ -13,7 +13,7 @@
 //
 // .. code-block:: cpp
 //
-#define CH_VERSION "1.1.1-beta"
+#define CH_VERSION "1.1.2-beta"
 
 // .. c:macro:: CH_TLS_CLEANUP
 //

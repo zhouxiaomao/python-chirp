@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 1.1.1-beta amalgamation
+// libchirp 1.1.2-beta amalgamation
 // ================================
 
 // =========
@@ -965,6 +965,19 @@ ch_run(uv_loop_t* loop);
 //       Connections to "127.0.0.1" and "::1" aren't encrypted anyways.
 //       Defaults to 0.
 //
+//   You can create the certificate using the makepki Makefile_ on github. If
+//   you want to create it manually the chain has to contain:
+//
+//   * The certification authority's public key
+//
+//   * The client public key (signed by CA)
+//
+//   * The client private key
+//
+//   Any client-key signed by the CA will be able to connect.
+//
+//   .. _Makefile: https://github.com/concretecloud/chirp/tree/master/mk/makepki
+//
 // .. code-block:: cpp
 //
 struct ch_config_s {
@@ -1265,6 +1278,10 @@ ch_chirp_set_auto_stop_loop(ch_chirp_t* chirp);
 //    the loop.
 //
 //    This function is thread-safe.
+//
+//    If libuv is used properly this is not needed. Libuv will stop running,
+//    after closing all handles and requests. But it helps debugging missing
+//    uv_close() calls.
 //
 //    :param ch_chirp_t* chirp: Pointer to a chirp object.
 

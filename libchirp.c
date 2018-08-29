@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 1.1.1-beta amalgamation
+// libchirp 1.1.2-beta amalgamation
 // ================================
 
 #include "libchirp.h"
@@ -7908,12 +7908,14 @@ static char _ch_en_manual_tls = 0;
 
 // .. c:var:: _ch_en_threading_setup
 //
-//    Track if threading has been setup by us. An therefore we have to clean it
+//    Track if threading has been setup by us. And therefore we have to clean it
 //    up.
 //
 // .. code-block:: cpp
 //
+#ifdef CH_OPENSSL_10_API
 static char _ch_en_threading_setup = 0;
+#endif
 
 #ifdef CH_OPENSSL_10_API
 // .. c:var:: _ch_en_lock_count
