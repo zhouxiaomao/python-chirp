@@ -32,7 +32,7 @@ class ChirpFuture(Future):
         """Return the answer to the request.
 
         See :py:meth:`concurrent.futures.Future.result`. In contrast to the
-        standard Future this method will release the message-slot if
+        standard Future this method will be release the message-slot if
         :py:attr:`libchirp.Config.AUTO_RELEASE` is True.
 
         .. code-block:: python
@@ -811,6 +811,8 @@ class Loop(object):
         def stop_libuv(self):
             with self._lock:
                 async_t = self._async_t
+            # There will be another iteration into the event-loop, we don't
+            # need to wait for a callback
             lib.uv_close(
                 ffi.cast("uv_handle_t*", async_t),
                 ffi.NULL
@@ -1140,10 +1142,10 @@ class ChirpBase(object):
         don't intend to consume the result use :py:meth:`send` instead.
 
         By default the message slot used by the response will released.
-        If auto_release is False, you have to release the response-message.
+        If `auto_release` is False, you have to release the response-message.
 
         Exceptions, threading and concurrency aspects are the same as
-        :py:meth:`send`. Issue: If a answer to request arrives after the
+        :py:meth:`send`. Issue: If an answer to a request arrives after the
         timeout it will be delivered at normal message.
 
         To wait for the request being sent use
