@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 1.1.2-beta amalgamation
+// libchirp 1.2.0-beta amalgamation
 // ================================
 
 #include "libchirp.h"
@@ -4538,7 +4538,7 @@ ch_bf_release(ch_buffer_pool_t* pool, int id);
 //
 //    Possible states of a reader.
 //
-//    .. c:member:: CH_RD_START
+//    .. c:member:: CH_RD_HANDSHAKE
 //
 //       Initial state, chirp handshake has to be done.
 //
@@ -4561,12 +4561,11 @@ ch_bf_release(ch_buffer_pool_t* pool, int id);
 // .. code-block:: cpp
 //
 typedef enum {
-    CH_RD_START     = 0,
-    CH_RD_HANDSHAKE = 1,
-    CH_RD_WAIT      = 2,
-    CH_RD_SLOT      = 3,
-    CH_RD_HEADER    = 4,
-    CH_RD_DATA      = 5,
+    CH_RD_HANDSHAKE = 0,
+    CH_RD_WAIT      = 1,
+    CH_RD_SLOT      = 2,
+    CH_RD_HEADER    = 3,
+    CH_RD_DATA      = 4,
 } ch_rd_state_t;
 
 // .. c:type:: ch_reader_t
@@ -5240,6 +5239,14 @@ ch_cn_send_if_pending(ch_connection_t* conn);
 //    :param ch_connection_t* conn: Connection
 //
 #endif
+
+// .. c:function::
+void
+ch_cn_send_handshake(ch_connection_t* conn);
+//
+//    Send to remote
+//
+//    :param ch_connection_t* conn: Connection to send handshake to
 
 // .. c:function::
 void
@@ -7142,6 +7149,16 @@ _ch_cn_write_cb(uv_write_t* req, int status);
 //
 #endif
 
+// .. c:function::
+static void
+_ch_cn_send_handshake_cb(uv_write_t* req, int status);
+//
+//    Called when handshake is sent.
+//
+//    :param uv_write_t* req: Write request type, holding the
+//                            connection handle
+//    :param int status: Send status
+
 // Definitions
 // ===========
 //
@@ -7689,20 +7706,19 @@ ch_cn_send_if_pending(ch_connection_t* conn)
 // .. code-block:: cpp
 //
 {
-    A(!(conn->flags & CH_CN_WRITE_PENDING), "Another write is still pending");
     ch_chirp_t* chirp = conn->chirp;
     ch_chirp_check_m(chirp);
     int pending = BIO_pending(conn->bio_app);
     if (pending < 1) {
         if (!(conn->flags & CH_CN_TLS_HANDSHAKE ||
               conn->flags & CH_CN_SHUTTING_DOWN)) {
-            int stop;
-            ch_rd_read(conn, NULL, 0, &stop); /* Start the reader */
+            ch_cn_send_handshake(conn);
         }
         return;
     }
-    A(!(conn->flags & CH_CN_BUF_WTLS_USED), "The wtls buffer is still used");
 #ifdef CH_ENABLE_ASSERTS
+    A(!(conn->flags & CH_CN_WRITE_PENDING), "Another write is still pending");
+    A(!(conn->flags & CH_CN_BUF_WTLS_USED), "The wtls buffer is still used");
     conn->flags |= CH_CN_BUF_WTLS_USED;
     conn->flags |= CH_CN_WRITE_PENDING;
 #endif
@@ -7867,6 +7883,69 @@ ch_cn_write(
            (void*) conn);
     }
 #endif
+}
+
+// .. c:function::
+static void
+_ch_cn_send_handshake_cb(uv_write_t* req, int status)
+//    :noindex:
+//
+//    see: :c:func:`_ch_cn_send_handshake_cb`
+//
+// .. code-block:: cpp
+//
+{
+    ch_connection_t* conn  = req->data;
+    ch_chirp_t*      chirp = conn->chirp;
+    ch_chirp_check_m(chirp);
+    if (status < 0) {
+        LC(chirp,
+           "Sending handshake failed. ",
+           "ch_connection_t:%p",
+           (void*) conn);
+        ch_cn_shutdown(conn, CH_WRITE_ERROR);
+        return;
+    }
+#ifndef CH_WITHOUT_TLS
+    /* Check if we already have a message (just after handshake)
+     * this is here so we have no overlapping ch_cn_write. If the read causes a
+     * ack message to be sent and the write of the handshake is not finished,
+     * chirp would assert or be in undefined state. */
+    if (conn->flags & CH_CN_ENCRYPTED) {
+        int stop;
+        ch_pr_decrypt_read(conn, &stop);
+    }
+#endif
+    if (conn->remote) {
+        ch_wr_process_queues(conn->remote);
+        /* Process queues in case we have blocked a send, this only happens in
+         * the very rare case, where sending the handshake gets extremely
+         * delayed. */
+    }
+}
+
+// .. c:function::
+void
+ch_cn_send_handshake(ch_connection_t* conn)
+//    :noindex:
+//
+//    see: :c:func:`_ch_cn_send_handshake`
+//
+// .. code-block:: cpp
+//
+{
+    ch_chirp_t* chirp = conn->chirp;
+    LC(chirp, "Sending handshake to. ", "ch_connection_t:%p", (void*) conn);
+    ch_chirp_int_t*   ichirp = chirp->_;
+    ch_sr_handshake_t hs_tmp;
+    ch_buf            hs_buf[CH_SR_HANDSHAKE_SIZE];
+    hs_tmp.port = ichirp->public_port;
+    memcpy(hs_tmp.identity, ichirp->identity, CH_ID_SIZE);
+    ch_sr_hs_to_buf(&hs_tmp, hs_buf);
+    uv_buf_t buf;
+    buf.base = hs_buf;
+    buf.len  = CH_SR_HANDSHAKE_SIZE;
+    ch_cn_write(conn, &buf, 1, _ch_cn_send_handshake_cb);
 }
 // ==========
 // Encryption
@@ -8715,7 +8794,10 @@ _ch_pr_do_handshake(ch_connection_t* conn)
             return;
         }
     }
-    ch_cn_send_if_pending(conn);
+    if (!(conn->flags & CH_CN_WRITE_PENDING)) {
+        ch_cn_send_if_pending(conn);
+        /* Start a send-if-pending-loop if it is not running */
+    }
 }
 #endif
 
@@ -9032,8 +9114,7 @@ ch_pr_conn_start(
         return CH_SUCCESS;
     }
 #endif
-    int stop;
-    ch_rd_read(conn, NULL, 0, &stop); /* Start reader */
+    ch_cn_send_handshake(conn);
     return CH_SUCCESS;
 }
 
@@ -9522,17 +9603,6 @@ _ch_rd_handshake(ch_connection_t* conn, ch_buf* buf, size_t read);
 
 // .. c:function::
 static void
-_ch_rd_handshake_cb(uv_write_t* req, int status);
-//
-//    Called when handshake is sent.
-//
-//    :param uv_write_t* req: Write request type, holding the
-//                            connection handle
-//    :param int status: Send status
-//
-
-// .. c:function::
-static void
 _ch_rd_handle_msg(
         ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg);
 //
@@ -9603,7 +9673,6 @@ _ch_rd_verify_msg(ch_connection_t* conn, ch_message_t* msg);
 // .. code-block:: cpp
 //
 char* _ch_rd_state_names[] = {
-        "CH_RD_START",
         "CH_RD_HANDSHAKE",
         "CH_RD_WAIT",
         "CH_RD_SLOT",
@@ -9761,39 +9830,6 @@ _ch_rd_handle_msg(ch_connection_t* conn, ch_reader_t* reader, ch_message_t* msg)
     }
 }
 
-// .. c:function::
-static void
-_ch_rd_handshake_cb(uv_write_t* req, int status)
-//    :noindex:
-//
-//    see: :c:func:`_ch_rd_handshake_cb`
-//
-// .. code-block:: cpp
-//
-{
-    ch_connection_t* conn  = req->data;
-    ch_chirp_t*      chirp = conn->chirp;
-    ch_chirp_check_m(chirp);
-    if (status < 0) {
-        LC(chirp,
-           "Sending handshake failed. ",
-           "ch_connection_t:%p",
-           (void*) conn);
-        ch_cn_shutdown(conn, CH_WRITE_ERROR);
-        return;
-    }
-#ifndef CH_WITHOUT_TLS
-    /* Check if we already have a message (just after handshake)
-     * this is here so we have no overlapping ch_cn_write. If the read causes a
-     * ack message to be sent and the write of the handshake is not finished,
-     * chirp would assert or be in undefined state. */
-    if (conn->flags & CH_CN_ENCRYPTED) {
-        int stop;
-        ch_pr_decrypt_read(conn, &stop);
-    }
-#endif
-}
-
 static ssize_t
 _ch_rd_read_buffer(
         ch_connection_t* conn,
@@ -9877,19 +9913,6 @@ _ch_rd_read_step(
        (void*) conn);
 
     switch (reader->state) {
-    case CH_RD_START: {
-        ch_sr_handshake_t hs_tmp;
-        ch_buf            hs_buf[CH_SR_HANDSHAKE_SIZE];
-        hs_tmp.port = ichirp->public_port;
-        memcpy(hs_tmp.identity, ichirp->identity, CH_ID_SIZE);
-        ch_sr_hs_to_buf(&hs_tmp, hs_buf);
-        uv_buf_t buf;
-        buf.base = hs_buf;
-        buf.len  = CH_SR_HANDSHAKE_SIZE;
-        ch_cn_write(conn, &buf, 1, _ch_rd_handshake_cb);
-        reader->state = CH_RD_HANDSHAKE;
-        break;
-    }
     case CH_RD_HANDSHAKE: {
         if (bytes_read == 0)
             return -1;
@@ -10114,7 +10137,7 @@ ch_rd_init(ch_reader_t* reader, ch_connection_t* conn, ch_chirp_int_t* ichirp)
 // .. code-block:: cpp
 //
 {
-    reader->state = CH_RD_START;
+    reader->state = CH_RD_HANDSHAKE;
     reader->pool  = ch_alloc(sizeof(*reader->pool));
     if (reader->pool == NULL) {
         return CH_ENOMEM;
@@ -11422,7 +11445,10 @@ ch_wr_process_queues(ch_remote_t* remote)
     } else {
         AP(ch_at_allocated(conn), "Conn (%p) not allocated", (void*) conn);
         if (!(conn->flags & CH_CN_CONNECTED) ||
-            conn->flags & CH_CN_SHUTTING_DOWN) {
+            conn->flags & CH_CN_SHUTTING_DOWN ||
+            conn->flags & CH_CN_WRITE_PENDING) {
+            /* CH_CN_WRITE_PENDING: the connection can be blocked by a low-level
+             * write. */
             return CH_BUSY;
         } else if (conn->writer.msg != NULL) {
             return CH_BUSY;

@@ -75,9 +75,7 @@ _ch_tst_read_stdin_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
 static void
 _ch_tst_start(ch_chirp_t* chirp)
 {
-#ifndef NDEBUG
     CH_WRITE_LOG(chirp, "Echo server started", CH_NO_ARG);
-#endif
     if (_ch_tst_always_encrypt) {
         ch_chirp_set_always_encrypt();
     }
@@ -97,9 +95,7 @@ _ch_tst_sent_cb(ch_chirp_t* chirp, ch_message_t* msg, ch_error_t status)
 {
     (void) (chirp);
     (void) (status);
-#ifndef NDEBUG
     CH_WRITE_LOGC(chirp, "Release message.", "ch_message_t:%p", msg);
-#endif
     ch_chirp_release_msg_slot(chirp, msg, NULL);
 }
 
@@ -109,9 +105,7 @@ _ch_tst_recv_message_cb(ch_chirp_t* chirp, ch_message_t* msg)
     assert(msg != NULL && "Not a ch_message_t*");
     assert(!(msg->type & CH_MSG_ACK) && "ACK should not call callback");
     assert(!(msg->_flags & CH_MSG_USED) && "The message should not be used");
-#ifndef NDEBUG
     CH_WRITE_LOGC(chirp, "Echo message", "ch_message_t:%p", msg);
-#endif
     ch_chirp_send(chirp, msg, _ch_tst_sent_cb);
 }
 
@@ -119,7 +113,11 @@ int
 main(int argc, char* argv[])
 {
     signal(SIGPIPE, SIG_IGN);
+#ifdef CH_WITHOUT_TLS
+    fprintf(stderr, "Starting echo_test (NO TLS)\n");
+#else
     fprintf(stderr, "Starting echo_test\n");
+#endif
     if (argc < 3) {
         fprintf(stderr, "%s listen_port always_encrypt\n", argv[0]);
         exit(1);
