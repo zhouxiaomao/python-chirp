@@ -30,7 +30,7 @@ Supported by |adsy|
 .. |adsy| image:: https://1042.ch/ganwell/adsy-logo.svg
    :target: https://adfinis-sygroup.ch/
 
-BETA-RELEASE: 1.1.2
+BETA-RELEASE: 1.2.0
 ===================
 
 Features
@@ -118,6 +118,15 @@ Changes
   * Fixes bug when disabling signals
 
 * Disable signals
+
+2018-12-04 - 1.2.0b0
+--------------------
+
+* Update to libchirp.c 1.2.0-beta
+
+* Implement request API
+
+  * A request send a request as message and return the answer to that request
 
 License
 =======
