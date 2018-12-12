@@ -104,7 +104,7 @@ setup.py
             "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
             "Topic :: System :: Networking",
         ],
-        packages=find_packages(),
+        packages=["libchirp"],
         install_requires=["cffi>=1.0.0"],
         setup_requires=["cffi>=1.0.0"],
         cffi_modules=[

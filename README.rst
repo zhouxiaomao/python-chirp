@@ -119,7 +119,7 @@ Changes
 
 * Disable signals
 
-2018-12-12 - 1.2.1b1
+2018-12-12 - 1.2.1b2
 --------------------
 
 * Update to libchirp.c 1.2.1-beta
