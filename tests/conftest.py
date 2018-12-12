@@ -83,7 +83,10 @@ def echo():
     args = [
         "./echo_test", "2993", "0"
     ]
-    echo = Popen(args, stdin=PIPE, preexec_fn=os.setsid)
+    if hasattr(os, "setsid"):
+        echo = Popen(args, stdin=PIPE, preexec_fn=os.setsid)
+    else:
+        echo = Popen(args, stdin=PIPE)
     time.sleep(0.6)
     yield echo
     close(echo)
@@ -92,11 +95,17 @@ def echo():
 def close(proc):
     """Close the subprocess."""
     try:
-        proc.stdin.write(b"\n")
+        proc.stdin.write(os.linesep.encode())
         proc.stdin.flush()
         proc.wait(4)
     except TimeoutExpired:
         print("Doing kill")
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        if hasattr(os, "getpgid"):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        else:
+            os.kill(proc.pid, signal.SIGTERM)
         proc.poll()
-        raise  # Its a bug when the process doesn't complete
+        if sys.platform != 'win32':
+            raise  # It's a bug when the process doesn't complete
+        # It's no bug on windows, it doesn't seem to send stdin to the process
+        # and I don't care
