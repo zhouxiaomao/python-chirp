@@ -118,7 +118,7 @@ Changes
 
 * Implement request API
 
-  * A request send a request as message and return the answer to that request
+  * Send a request as message and return the answer to that request
 
 2018-03-21 - 1.1.2b0
 --------------------
