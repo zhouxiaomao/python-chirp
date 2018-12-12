@@ -30,7 +30,7 @@ Supported by |adsy|
 .. |adsy| image:: https://1042.ch/ganwell/adsy-logo.svg
    :target: https://adfinis-sygroup.ch/
 
-BETA-RELEASE: 1.2.0
+BETA-RELEASE: 1.2.1
 ===================
 
 Features
@@ -119,10 +119,10 @@ Changes
 
 * Disable signals
 
-2018-12-04 - 1.2.0b0
+2018-12-12 - 1.2.1b0
 --------------------
 
-* Update to libchirp.c 1.2.0-beta
+* Update to libchirp.c 1.2.1-beta
 
 * Implement request API
 
