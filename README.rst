@@ -103,22 +103,6 @@ testing
 Changes
 =======
 
-2018-03-20 - 1.1.1b0
----------------------
-
-* Update to libchirp.c 1.1.0-beta
-
-2018-03-21 - 1.1.2b0
---------------------
-
-* Update to libchirp.c 1.1.1-beta
-
-  * Fixes deadlock in send
-
-  * Fixes bug when disabling signals
-
-* Disable signals
-
 2018-12-12 - 1.2.1b2
 --------------------
 
@@ -131,6 +115,22 @@ Changes
 * Implement request API
 
   * A request send a request as message and return the answer to that request
+
+2018-03-21 - 1.1.2b0
+--------------------
+
+* Update to libchirp.c 1.1.1-beta
+
+  * Fixes deadlock in send
+
+  * Fixes bug when disabling signals
+
+* Disable signals
+
+2018-03-20 - 1.1.1b0
+---------------------
+
+* Update to libchirp.c 1.1.0-beta
 
 License
 =======
