@@ -7,7 +7,7 @@ import os
 
 from libchirp import ChirpBase, Loop, MessageThread, lib
 
-_echo_test = os.path.exists("./echo_test")
+_echo_test = os.path.exists("./echo_test") or os.path.exists("./echo_test.exe")
 
 
 def test_value_error(loop, config):
