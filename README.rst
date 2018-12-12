@@ -122,6 +122,10 @@ Changes
 2018-12-12 - 1.2.1b2
 --------------------
 
+`Read the Docs 1.2.1`_
+
+.. _`Read the Docs 1.2.1`: https://docs.adfinis-sygroup.ch/public/python-chirp-1.2.1
+
 * Update to libchirp.c 1.2.1-beta
 
 * Implement request API
