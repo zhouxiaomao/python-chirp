@@ -184,6 +184,7 @@ Python measurements
 * 3'500 process passes in plain python (single)
 * 42'000 thread passes in plain python (pooled)
 * 3'500 process passes in plain python (pooled)
+
   * Actually 3'000 but you wouldn't pool it in that case
 
 libchirp C measurements
@@ -197,8 +198,10 @@ libchirp python measurements
 ----------------------------
 
 * 18'000 process passes with CFFI bindings (single)
+
   * Compared to the 3'500 process passes of pure python this is 5 times faster
 * 23'000 process passes with CFFI bindings (pooled)
+
   * Compared to the 3'500 process passes of pure python this is 6.5 times faster
 
 The limiting factor are the thread passes in pure python, since the libuv
