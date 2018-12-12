@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ================================
-// libchirp 1.2.0-beta amalgamation
+// libchirp 1.2.1-beta amalgamation
 // ================================
 
 // =========
