@@ -32,7 +32,7 @@ python-chirp
 
 Message-passing for everyone
 
-BETA-RELEASE: 1.2.0
+BETA-RELEASE: 1.2.1
 ===================
 
 https://github.com/concretecloud/python-chirp
