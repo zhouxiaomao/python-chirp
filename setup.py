@@ -5,7 +5,7 @@ import codecs
 import sys
 import os
 from os import path
-from setuptools import setup, find_packages
+from setuptools import setup
 
 if sys.hexversion <= 0x3050000:
     print("Install requires python 3.5+")
