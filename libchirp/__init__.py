@@ -911,15 +911,16 @@ def _send_cb(chirp_t, msg_t, status):
     """libchirp.c calls this when a message is sent."""
     chirp = ffi.from_handle(chirp_t.user_data)
     msg = ffi.from_handle(msg_t.user_data)
-    if status == lib.CH_SUCCESS:
-        msg._fut.set_result(msg)
-    else:
-        msg._fut.set_exception(
-            chirp_error_to_exception(status, _last_error.data)
-        )
     with chirp._lock:
         del chirp._await_msgs[msg]
+        fut = msg._fut
         msg._fut = None
+    if status == lib.CH_SUCCESS:
+        fut.set_result(msg)
+    else:
+        fut.set_exception(
+            chirp_error_to_exception(status, _last_error.data)
+        )
 
 
 def chirp_error_to_exception(error, msg):
